@@ -46,7 +46,7 @@ Modern applications need to work with multiple LLM providers, but managing diffe
 
 **From Cargo:**
 ```bash
-cargo install --git https://github.com/yourusername/sentinel
+cargo install --git https://github.com/fbk2111/sentinel
 ```
 
 **Using Docker:**
@@ -55,7 +55,7 @@ docker pull sentinel/sentinel:latest
 ```
 
 **From Releases:**
-Download the latest binary from [releases](https://github.com/yourusername/sentinel/releases)
+Download the latest binary from [releases](https://github.com/fbk2111/sentinel/releases)
 
 ### Basic Usage
 
@@ -490,7 +490,7 @@ We welcome contributions! Sentinel is open source and community-driven.
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/yourusername/sentinel.git
+git clone https://github.com/fbk2111/sentinel.git
 cd sentinel
 ```
 
@@ -537,10 +537,7 @@ sentinel/
 │   ├── router/             # Smart routing logic
 │   ├── storage/            # Database and persistence
 │   └── ui/                 # Dashboard web interface
-├── tests/                  # Integration tests
-├── benchmarks/             # Performance benchmarks
-├── examples/               # Usage examples
-└── docs/                   # Documentation
+└── docs                   # Readme ....
 ```
 
 ### Contribution Guidelines
@@ -579,9 +576,8 @@ git push origin feature/your-feature-name
 - Use conventional commit messages
 
 ### Getting Help
-- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/yourusername/sentinel/issues)
-- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/yourusername/sentinel/discussions)
-- **Discord**: Join our community chat at [discord.gg/sentinel](https://discord.gg/sentinel)
+- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/fbk2111/sentinel/issues)
+- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/fbk2111/sentinel/discussions)
 
 ## Supported Providers
 
@@ -763,7 +759,7 @@ Special thanks to all contributors and the Rust community.
 **Ready to optimize your LLM costs and improve reliability?**
 
 ```bash
-cargo install --git https://github.com/yourusername/sentinel
+cargo install --git https://github.com/fbk2111/sentinel
 sentinel start
 ```
 
