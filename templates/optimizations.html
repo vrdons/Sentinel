@@ -1,0 +1,81 @@
+<!-- COST OPTIMIZATION SUGGESTIONS -->
+{% if optimizations.len() > 0 %}
+<div class="bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-xl p-6 shadow-lg">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-xl font-bold text-yellow-800">💡 Smart Money-Saving Suggestions</h3>
+        <div class="bg-yellow-200 text-yellow-800 px-3 py-1 rounded-full text-sm font-semibold">
+            {{ optimizations.len() }} opportunities
+        </div>
+    </div>
+    
+    <div class="space-y-4">
+        {% for opt in optimizations %}
+        <div class="bg-white rounded-lg p-4 border border-yellow-200 hover:shadow-md transition-shadow">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="bg-red-100 text-red-800 text-xs px-2 py-1 rounded">{{ opt.original_model }}</span>
+                        <span class="text-gray-400">→</span>
+                        <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">{{ opt.suggested_model }}</span>
+                    </div>
+                    <p class="text-sm text-gray-700 mb-2">{{ opt.reason }}</p>
+                    <div class="flex items-center gap-4 text-xs text-gray-600">
+                        <span>Endpoint: <code class="bg-gray-100 px-1 rounded">{{ opt.endpoint_pattern }}</code></span>
+                        <span>Confidence: {{ opt.confidence_score }}</span>
+                    </div>
+                </div>
+                <div class="text-right ml-4">
+                    <div class="text-2xl font-bold text-green-600">{{ opt.potential_savings_percent }}%</div>
+                    <div class="text-xs text-gray-600">savings</div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div class="mt-4 p-3 bg-yellow-100 rounded-lg text-center">
+        <div class="text-sm text-yellow-800">
+            <strong>Potential monthly savings:</strong> 
+            ${{ total_potential_savings }} if you apply all suggestions
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+    <div class="text-green-600 mb-2">✅ All systems optimized!</div>
+    <div class="text-sm text-green-700">Your current setup is already cost-efficient. We'll keep monitoring for new opportunities.</div>
+</div>
+{% endif %}
+
+<!-- Model Performance Leaderboard -->
+<div class="mt-6 bg-white rounded-lg shadow p-6">
+    <h3 class="text-lg font-semibold text-gray-800 mb-4">🏆 Model Performance Leaderboard (Last 30 Days)</h3>
+    <div class="overflow-hidden">
+        <table class="min-w-full">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Requests</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Quality</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Cost</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quality/$$</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for model in top_models %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-2 text-sm font-medium text-gray-900">
+                        {{ model.model }}
+                    </td>
+                    <td class="px-4 py-2 text-sm text-gray-500">{{ model.requests }}</td>
+                    <td class="px-4 py-2 text-sm text-gray-500">
+                        {{ model.avg_quality }}%
+                    </td>
+                    <td class="px-4 py-2 text-sm text-gray-500">${{ model.avg_cost }}</td>
+                    <td class="px-4 py-2 text-sm font-medium text-green-600">{{ model.quality_per_dollar }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

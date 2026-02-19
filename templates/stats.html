@@ -1,0 +1,33 @@
+<div class="bg-green-600 p-8 rounded-lg shadow col-span-1 md:col-span-3 text-white text-center">
+    <p class="text-lg font-medium uppercase opacity-80">You've saved this month</p>
+    <p class="text-6xl font-black">${{ monthly_saved }}</p>
+    <p class="text-sm mt-2 opacity-80">Lifetime savings: ${{ total_saved }}</p>
+    <div class="mt-2 inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-bold">
+        ⚡ Latencies Added: <1ms
+    </div>
+</div>
+
+<div class="bg-white p-6 rounded-lg shadow">
+    <p class="text-sm font-medium text-gray-500 uppercase">Total Requests</p>
+    <p class="text-2xl font-bold text-gray-900">{{ total_requests }}</p>
+</div>
+<div class="bg-white p-6 rounded-lg shadow">
+    <p class="text-sm font-medium text-gray-500 uppercase">Total Cost</p>
+    <p class="text-2xl font-bold text-gray-900">${{ total_cost }}</p>
+</div>
+<div class="bg-white p-6 rounded-lg shadow">
+    <p class="text-sm font-medium text-gray-500 uppercase">Avg Latency</p>
+    <p class="text-2xl font-bold text-gray-900">{{ avg_latency }}ms</p>
+</div>
+<div class="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
+    <p class="text-sm font-medium text-gray-500 uppercase">Cache Hits</p>
+    <p class="text-2xl font-bold text-gray-900">{{ cache_hits }}</p>
+</div>
+<div class="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
+    <p class="text-sm font-medium text-gray-500 uppercase">PII Redacted</p>
+    <p class="text-2xl font-bold text-gray-900">{{ pii_redacted }}</p>
+</div>
+<div class="bg-white p-6 rounded-lg shadow border-l-4 border-yellow-500">
+    <p class="text-sm font-medium text-gray-500 uppercase">Cost Arbitrage Saved</p>
+    <p class="text-2xl font-bold text-gray-900">${{ total_saved }}</p>
+</div>

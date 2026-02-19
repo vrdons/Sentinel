@@ -1,0 +1,21 @@
+services:
+  sentinel:
+    build: .
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+    volumes:
+      - ./sentinel.toml:/app/sentinel.toml
+      - sentinel-data:/app/data
+    environment:
+      - SENTINEL_DATABASE__PATH=/app/data/sentinel.db
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+
+volumes:
+  sentinel-data:

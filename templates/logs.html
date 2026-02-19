@@ -1,0 +1,24 @@
+{% for log in logs %}
+<tr>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ log.timestamp.format("%H:%M:%S") }}</td>
+    <td class="px-6 py-4 whitespace-nowrap">
+        {% if log.status == "success" %}
+        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Success</span>
+        {% else %}
+        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Error</span>
+        {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ log.provider }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ log.model }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm">
+        {% if log.cache_hit %}
+        <span class="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-200">Cache</span>
+        {% endif %}
+        {% if log.pii_redacted %}
+        <span class="text-xs bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded border border-purple-200">PII</span>
+        {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ log.latency_ms }}ms</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${{ "{:.4}"|format(log.cost_usd) }}</td>
+</tr>
+{% endfor %}

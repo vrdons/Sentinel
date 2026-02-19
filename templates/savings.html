@@ -1,0 +1,58 @@
+<!-- MASSIVE SAVINGS HERO SECTION -->
+<div class="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl shadow-2xl p-8 text-white text-center relative overflow-hidden">
+    <!-- Background decoration -->
+    <div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-16 translate-x-16"></div>
+    <div class="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-12 -translate-x-12"></div>
+    
+    <div class="relative z-10">
+        <div class="mb-4">
+            <h2 class="text-lg font-medium opacity-90">💰 The Gateway That Pays For Itself</h2>
+        </div>
+        <div class="mb-2">
+            <div class="text-6xl font-black tracking-tight drop-shadow-lg">
+                ${{ total_saved }}
+            </div>
+            <div class="text-xl font-semibold opacity-90">saved this month</div>
+        </div>
+
+        <div class="mt-2 inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-bold">
+            ⚡ Latencies Added: <1ms
+        </div>
+        
+        {% if total_saved > 1000.0 %}
+        <div class="text-sm opacity-80 mb-4">
+            🎉 Amazing! You've saved over $1,000 with smart routing!
+        </div>
+        {% endif %}
+        
+        <div class="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-white/20">
+            <div>
+                <div class="text-2xl font-bold">{{ savings_percentage }}%</div>
+                <div class="text-sm opacity-80">Cost Reduction</div>
+            </div>
+            <div>
+                <div class="text-2xl font-bold">{{ optimized_requests }}</div>
+                <div class="text-sm opacity-80">Smart Routes</div>
+            </div>
+            <div>
+                <div class="text-2xl font-bold">${{ original_cost }}</div>
+                <div class="text-sm opacity-80">Would Have Spent</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Monthly Savings Chart -->
+{% if monthly_data.len() > 1 %}
+<div class="mt-4 bg-white rounded-lg shadow p-6">
+    <h3 class="text-lg font-semibold text-gray-800 mb-4">📈 Monthly Savings Trend</h3>
+    <div class="space-y-2">
+        {% for month_data in monthly_data %}
+        <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
+            <span class="text-sm font-medium">{{ month_data.month }}</span>
+            <span class="text-sm font-bold text-green-600">${{ month_data.saved }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}

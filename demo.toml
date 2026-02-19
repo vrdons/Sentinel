@@ -1,0 +1,14 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[dashboard]
+host = "127.0.0.1"
+port = 3000
+
+[providers]
+primary = "openai"
+fallback = ["anthropic"]
+
+[database]
+path = "./demo.db"

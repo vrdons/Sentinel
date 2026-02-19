@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumen Dashboard</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8 flex justify-between items-center">
+            <h1 class="text-3xl font-bold text-gray-800">Lumen Dashboard</h1>
+            <div class="flex space-x-4">
+                <span class="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded border border-green-400">Proxy Active</span>
+                <span class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded border border-blue-400">v2.0.0</span>
+            </div>
+        </header>
+
+        <!-- MASSIVE SAVINGS HERO SECTION -->
+        <div id="savings-hero" hx-get="/api/savings" hx-trigger="load, every 30s" class="mb-8">
+            <!-- This will be populated with the huge savings number -->
+            <div class="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl shadow-2xl p-8 text-white text-center animate-pulse">
+                <div class="mb-4">
+                    <h2 class="text-lg font-medium opacity-90">💰 The Gateway That Pays For Itself</h2>
+                </div>
+                <div class="mb-2">
+                    <div class="text-6xl font-black tracking-tight">$--,---</div>
+                    <div class="text-xl font-semibold opacity-90">saved this month</div>
+                </div>
+                <div class="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-white/20">
+                    <div>
+                        <div class="text-2xl font-bold">--%</div>
+                        <div class="text-sm opacity-80">Cost Reduction</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold">---</div>
+                        <div class="text-sm opacity-80">Optimized Requests</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold">$--,---</div>
+                        <div class="text-sm opacity-80">Would Have Spent</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- COST OPTIMIZATION SUGGESTIONS -->
+        <div id="optimization-suggestions" hx-get="/api/optimizations" hx-trigger="load, every 60s" class="mb-8">
+            <!-- Optimization suggestions will be loaded here -->
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+                <h3 class="text-lg font-semibold text-yellow-800 mb-4">💡 Smart Suggestions</h3>
+                <div class="space-y-3">
+                    <div class="animate-pulse">
+                        <div class="h-4 bg-yellow-200 rounded w-3/4 mb-2"></div>
+                        <div class="h-3 bg-yellow-100 rounded w-1/2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Overview -->
+        <div id="stats" hx-get="/api/stats" hx-trigger="load, every 5s" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+            <!-- Stats will be loaded here -->
+            <div class="bg-white p-6 rounded-lg shadow animate-pulse">
+                <div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                <div class="h-8 bg-gray-300 rounded w-1/2"></div>
+            </div>
+            <!-- Repeat for other stats placeholders if desired -->
+        </div>
+
+        <!-- Recent Logs -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h2 class="text-xl font-semibold text-gray-800">Recent Requests</h2>
+                <button hx-get="/api/logs" hx-target="#log-table-body" class="text-blue-500 hover:text-blue-700 text-sm font-medium">Refresh</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Flags</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Latency</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody id="log-table-body" hx-get="/api/logs" hx-trigger="load, every 10s" class="bg-white divide-y divide-gray-200">
+                        <!-- Logs will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Custom htmx extension or logic to format JSON into HTML if needed
+        // For now, we'll modify the API to return HTML fragments for HTMX or use a template
+    </script>
+</body>
+</html>

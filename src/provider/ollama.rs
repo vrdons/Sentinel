@@ -1,0 +1,100 @@
+use crate::provider::{ChatRequest, ChatResponse, ChatResponseChunk, LlmProvider};
+use async_trait::async_trait;
+use reqwest::Client;
+use futures_util::stream::{BoxStream, StreamExt};
+
+#[derive(Debug)]
+pub struct OllamaProvider {
+    pub client: Client,
+    pub base_url: String,
+}
+
+impl OllamaProvider {
+    pub fn new(base_url: Option<String>) -> Self {
+        Self {
+            client: Client::new(),
+            base_url: base_url.unwrap_or_else(|| "http://localhost:11434/v1".to_string()),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for OllamaProvider {
+    async fn chat_completion(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
+        let response = self.client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!("Ollama API error: {}", error_text));
+        }
+
+        let chat_response = response.json::<ChatResponse>().await?;
+        Ok(chat_response)
+    }
+
+    async fn chat_completion_stream(&self, mut request: ChatRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>> {
+        request.stream = true;
+        let response = self.client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!("Ollama API error: {}", error_text));
+        }
+
+        let mut buffer = String::new();
+        let stream = response.bytes_stream().flat_map(move |item| {
+            match item {
+                Ok(bytes) => {
+                    buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    let mut chunks = Vec::new();
+                    while let Some(line_end) = buffer.find('\n') {
+                        let line = buffer.drain(..line_end + 1).collect::<String>();
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if line.starts_with("data: ") {
+                            let data = &line[6..];
+                            if data == "[DONE]" {
+                                continue;
+                            }
+                            match serde_json::from_str::<ChatResponseChunk>(data) {
+                                Ok(chunk) => chunks.push(Ok(chunk)),
+                                Err(e) => chunks.push(Err(anyhow::anyhow!("Failed to parse chunk: {}", e))),
+                            }
+                        }
+                    }
+                    futures_util::stream::iter(chunks)
+                }
+                Err(e) => futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))]),
+            }
+        });
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn health_check(&self) -> anyhow::Result<()> {
+        let response = self.client
+            .get(format!("{}/models", self.base_url))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Ollama health check failed: {}", response.status()))
+        }
+    }
+
+    fn name(&self) -> &str {
+        "ollama"
+    }
+}
