@@ -1,28 +1,30 @@
 use clap::Parser;
+use dashmap::DashMap;
+use sentinel::cache::semantic::{SemanticCache, SemanticCacheConfig};
 use sentinel::cli::{Cli, Commands};
 use sentinel::config::AppConfig;
-use sentinel::provider::openai::OpenAIProvider;
+use sentinel::cost::optimization::CostOptimizer;
+use sentinel::cost::pricing::PricingTable;
 use sentinel::provider::anthropic::AnthropicProvider;
+use sentinel::provider::cohere::CohereProvider;
 use sentinel::provider::gemini::GeminiProvider;
 use sentinel::provider::mistral::MistralProvider;
-use sentinel::provider::cohere::CohereProvider;
+use sentinel::provider::ollama::OllamaProvider;
+use sentinel::provider::openai::OpenAIProvider;
 use sentinel::provider::perplexity::PerplexityProvider;
 use sentinel::provider::together::TogetherAIProvider;
-use sentinel::provider::ollama::OllamaProvider;
-use sentinel::proxy::{ProxyState, ProviderHealth, create_router as create_proxy_router, check_all_providers};
 use sentinel::proxy::pii::PiiRedactor;
-use sentinel::storage::db::Database;
-use sentinel::cost::pricing::PricingTable;
-use sentinel::ui::create_router as create_ui_router;
-use sentinel::cache::semantic::{SemanticCache, SemanticCacheConfig};
+use sentinel::proxy::{
+    ProviderHealth, ProxyState, check_all_providers, create_router as create_proxy_router,
+};
 use sentinel::router::smart::SmartRouter;
-use sentinel::cost::optimization::CostOptimizer;
-use dashmap::DashMap;
+use sentinel::storage::db::Database;
+use sentinel::ui::create_router as create_ui_router;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{info, warn};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use std::time::Duration;
+use tracing::{info, warn};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -41,39 +43,76 @@ async fn main() -> anyhow::Result<()> {
             let config = AppConfig::load()?;
 
             // Initialize DB
-            let db_path = config.database.path.clone().unwrap_or_else(|| std::path::PathBuf::from("sentinel.db"));
+            let db_path = config
+                .database
+                .path
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("sentinel.db"));
             let db = Arc::new(Database::new(&db_path).await?);
 
             let primary_provider = if config.providers.primary == "openai" {
-                let api_key = config.providers.openai_api_key.clone().or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .openai_api_key
+                    .clone()
+                    .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("OpenAI API key not found"))?;
                 Arc::new(OpenAIProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "anthropic" {
-                let api_key = config.providers.anthropic_api_key.clone().or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .anthropic_api_key
+                    .clone()
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Anthropic API key not found"))?;
-                Arc::new(AnthropicProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
+                Arc::new(AnthropicProvider::new(api_key))
+                    as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "gemini" {
-                let api_key = config.providers.gemini_api_key.clone().or_else(|| std::env::var("GEMINI_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .gemini_api_key
+                    .clone()
+                    .or_else(|| std::env::var("GEMINI_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Gemini API key not found"))?;
                 Arc::new(GeminiProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "mistral" {
-                let api_key = config.providers.mistral_api_key.clone().or_else(|| std::env::var("MISTRAL_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .mistral_api_key
+                    .clone()
+                    .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Mistral API key not found"))?;
                 Arc::new(MistralProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "cohere" {
-                let api_key = config.providers.cohere_api_key.clone().or_else(|| std::env::var("COHERE_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .cohere_api_key
+                    .clone()
+                    .or_else(|| std::env::var("COHERE_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Cohere API key not found"))?;
                 Arc::new(CohereProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "perplexity" {
-                let api_key = config.providers.perplexity_api_key.clone().or_else(|| std::env::var("PERPLEXITY_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .perplexity_api_key
+                    .clone()
+                    .or_else(|| std::env::var("PERPLEXITY_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Perplexity API key not found"))?;
-                Arc::new(PerplexityProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
+                Arc::new(PerplexityProvider::new(api_key))
+                    as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "together" {
-                let api_key = config.providers.together_api_key.clone().or_else(|| std::env::var("TOGETHER_API_KEY").ok())
+                let api_key = config
+                    .providers
+                    .together_api_key
+                    .clone()
+                    .or_else(|| std::env::var("TOGETHER_API_KEY").ok())
                     .ok_or_else(|| anyhow::anyhow!("Together AI API key not found"))?;
-                Arc::new(TogetherAIProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>
+                Arc::new(TogetherAIProvider::new(api_key))
+                    as Arc<dyn sentinel::provider::LlmProvider>
             } else if config.providers.primary == "ollama" {
-                Arc::new(OllamaProvider::new(config.providers.ollama_base_url.clone())) as Arc<dyn sentinel::provider::LlmProvider>
+                Arc::new(OllamaProvider::new(
+                    config.providers.ollama_base_url.clone(),
+                )) as Arc<dyn sentinel::provider::LlmProvider>
             } else {
                 return Err(anyhow::anyhow!(
                     "Unsupported primary provider: {}",
@@ -84,47 +123,96 @@ async fn main() -> anyhow::Result<()> {
             let mut fallback_providers = Vec::new();
             for fallback in &config.providers.fallback {
                 if fallback == "openai" {
-                        if let Some(api_key) = config.providers.openai_api_key.clone().or_else(|| std::env::var("OPENAI_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(OpenAIProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .openai_api_key
+                        .clone()
+                        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(OpenAIProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "anthropic" {
-                        if let Some(api_key) = config.providers.anthropic_api_key.clone().or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(AnthropicProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .anthropic_api_key
+                        .clone()
+                        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(AnthropicProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "gemini" {
-                        if let Some(api_key) = config.providers.gemini_api_key.clone().or_else(|| std::env::var("GEMINI_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(GeminiProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .gemini_api_key
+                        .clone()
+                        .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(GeminiProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "mistral" {
-                        if let Some(api_key) = config.providers.mistral_api_key.clone().or_else(|| std::env::var("MISTRAL_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(MistralProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .mistral_api_key
+                        .clone()
+                        .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(MistralProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "cohere" {
-                        if let Some(api_key) = config.providers.cohere_api_key.clone().or_else(|| std::env::var("COHERE_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(CohereProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .cohere_api_key
+                        .clone()
+                        .or_else(|| std::env::var("COHERE_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(CohereProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "perplexity" {
-                        if let Some(api_key) = config.providers.perplexity_api_key.clone().or_else(|| std::env::var("PERPLEXITY_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(PerplexityProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .perplexity_api_key
+                        .clone()
+                        .or_else(|| std::env::var("PERPLEXITY_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(PerplexityProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "together" {
-                        if let Some(api_key) = config.providers.together_api_key.clone().or_else(|| std::env::var("TOGETHER_API_KEY").ok()) {
-                            fallback_providers.push(Arc::new(TogetherAIProvider::new(api_key)) as Arc<dyn sentinel::provider::LlmProvider>);
-                        }
+                    if let Some(api_key) = config
+                        .providers
+                        .together_api_key
+                        .clone()
+                        .or_else(|| std::env::var("TOGETHER_API_KEY").ok())
+                    {
+                        fallback_providers.push(Arc::new(TogetherAIProvider::new(api_key))
+                            as Arc<dyn sentinel::provider::LlmProvider>);
+                    }
                 } else if fallback == "ollama" {
-                        fallback_providers.push(Arc::new(OllamaProvider::new(config.providers.ollama_base_url.clone())) as Arc<dyn sentinel::provider::LlmProvider>);
+                    fallback_providers.push(Arc::new(OllamaProvider::new(
+                        config.providers.ollama_base_url.clone(),
+                    ))
+                        as Arc<dyn sentinel::provider::LlmProvider>);
                 }
             }
 
             // Create provider health wrappers
             let primary_health = ProviderHealth::new(primary_provider.clone());
-            let fallback_health: Vec<ProviderHealth> = fallback_providers.into_iter()
+            let fallback_health: Vec<ProviderHealth> = fallback_providers
+                .into_iter()
                 .map(ProviderHealth::new)
                 .collect();
 
             // Initialize semantic cache if enabled
             let semantic_cache = if config.cache.semantic {
-                info!("Initializing semantic cache with model: {}", config.cache.embedding_model);
+                info!(
+                    "Initializing semantic cache with model: {}",
+                    config.cache.embedding_model
+                );
                 let cache_config = SemanticCacheConfig {
                     enabled: config.cache.semantic,
                     similarity_threshold: config.cache.similarity_threshold,
@@ -136,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
                     Ok(cache) => {
                         info!("✓ Semantic cache initialized successfully");
                         Some(Arc::new(cache))
-                    },
+                    }
                     Err(e) => {
                         warn!("Failed to initialize semantic cache: {}", e);
                         None
@@ -147,7 +235,10 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let mut providers_map: std::collections::HashMap<String, Arc<dyn sentinel::provider::LlmProvider>> = std::collections::HashMap::new();
+            let mut providers_map: std::collections::HashMap<
+                String,
+                Arc<dyn sentinel::provider::LlmProvider>,
+            > = std::collections::HashMap::new();
             providers_map.insert(config.providers.primary.clone(), primary_provider.clone());
 
             // Re-initialize all requested providers for the map (or reuse existing ones)
@@ -167,7 +258,11 @@ async fn main() -> anyhow::Result<()> {
             // Add A/B tests from config
             for ab_test in &config.router.ab_tests {
                 if ab_test.active {
-                    smart_router.add_ab_test(ab_test.name.clone(), ab_test.models.clone(), ab_test.traffic_split.clone());
+                    smart_router.add_ab_test(
+                        ab_test.name.clone(),
+                        ab_test.models.clone(),
+                        ab_test.traffic_split.clone(),
+                    );
                 }
             }
 
@@ -198,7 +293,8 @@ async fn main() -> anyhow::Result<()> {
 
             if !dashboard_only {
                 let proxy_state = state.clone();
-                let proxy_addr = format!("{}:{}", config.server.host, config.server.port).parse::<SocketAddr>()?;
+                let proxy_addr = format!("{}:{}", config.server.host, config.server.port)
+                    .parse::<SocketAddr>()?;
                 let proxy_app = create_proxy_router(proxy_state);
                 info!("Sentinel proxy listening on {}", proxy_addr);
                 handles.push(tokio::spawn(async move {
@@ -209,7 +305,8 @@ async fn main() -> anyhow::Result<()> {
 
             if !proxy_only {
                 let ui_state = state.clone();
-                let ui_addr = format!("{}:{}", config.dashboard.host, config.dashboard.port).parse::<SocketAddr>()?;
+                let ui_addr = format!("{}:{}", config.dashboard.host, config.dashboard.port)
+                    .parse::<SocketAddr>()?;
                 let ui_app = create_ui_router(ui_state);
                 info!("Sentinel dashboard listening on {}", ui_addr);
                 handles.push(tokio::spawn(async move {
@@ -224,7 +321,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Logs { tail, follow } => {
             let config = AppConfig::load()?;
-            let db_path = config.database.path.unwrap_or_else(|| std::path::PathBuf::from("sentinel.db"));
+            let db_path = config
+                .database
+                .path
+                .unwrap_or_else(|| std::path::PathBuf::from("sentinel.db"));
             let db = Database::new(&db_path).await?;
 
             let mut last_timestamp = None;
@@ -238,9 +338,16 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 for log in new_logs {
-                    println!("[{}] {} | {} | {} | {} tokens | ${:.4} | {}ms",
-                        log.timestamp, log.status, log.provider, log.model,
-                        log.input_tokens + log.output_tokens, log.cost_usd, log.latency_ms);
+                    println!(
+                        "[{}] {} | {} | {} | {} tokens | ${:.4} | {}ms",
+                        log.timestamp,
+                        log.status,
+                        log.provider,
+                        log.model,
+                        log.input_tokens + log.output_tokens,
+                        log.cost_usd,
+                        log.latency_ms
+                    );
                     last_timestamp = Some(log.timestamp);
                 }
 

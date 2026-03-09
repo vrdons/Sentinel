@@ -29,8 +29,8 @@ protect_breaking_commits = true
 sort_commits = "oldest"
 split_commits = false
 commit_preprocessors = [
-	{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/AroxBot/framework/pull/${2}))" },
-	{ pattern = '\(([a-f0-9]{7,40})\)', replace = "([${1}](https://github.com/AroxBot/framework/commit/${1}))" },
+	{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/fbk2111/Sentinel/pull/${2}))" },
+	{ pattern = '\(([a-f0-9]{7,40})\)', replace = "([${1}](https://github.com/fbk2111/Sentinel/commit/${1}))" },
 	{ pattern = '(?s)--- updated-dependencies:.*', replace = "" },
 	{ pattern = '(?m)^Signed-off-by:.*$', replace = "" },
 	{ pattern = '(?m)^Co-authored-by:.*$', replace = "" },
