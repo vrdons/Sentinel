@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::collections::HashMap;
-use config::{Config, ConfigError, File, Environment};
+use config::{Config, ConfigError, Environment, File};
 use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
@@ -93,7 +93,10 @@ impl AppConfig {
             .set_default("dashboard.port", 3000)?
             .set_default("providers.primary", "openai")?
             .set_default("providers.fallback", Vec::<String>::new())?
-            .set_default("database.path", db_default_path.to_str().unwrap_or("./sentinel.db"))?
+            .set_default(
+                "database.path",
+                db_default_path.to_str().unwrap_or("./sentinel.db"),
+            )?
             .set_default("cache.semantic", false)?
             .set_default("cache.similarity_threshold", 0.85)?
             .set_default("cache.embedding_model", "all-MiniLM-L6-v2")?

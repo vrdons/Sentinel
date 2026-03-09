@@ -1,14 +1,14 @@
+use crate::cost::optimization::{CostOptimizer, OptimizationSuggestion};
 use crate::provider::{ChatRequest, ChatResponse, LlmProvider};
 use crate::storage::db::Database;
-use crate::cost::optimization::{CostOptimizer, OptimizationSuggestion};
-use std::sync::Arc;
-use std::collections::HashMap;
-use uuid::Uuid;
-use chrono::Utc;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use rand::Rng;
-use tracing::{info, debug, warn};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 pub use crate::config::RouterConfig as SmartRouterConfig;
 
@@ -24,7 +24,7 @@ pub struct ModelCandidate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainStep {
     pub model: String,
-    pub purpose: String,        // "analyze", "simplify", "verify", etc.
+    pub purpose: String, // "analyze", "simplify", "verify", etc.
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
 }
@@ -39,7 +39,7 @@ pub struct ReasoningChain {
 
 pub struct SmartRouter {
     pub config: SmartRouterConfig,
-    db: Arc<Database>,
+    _db: Arc<Database>,
     cost_optimizer: CostOptimizer,
     providers: HashMap<String, Arc<dyn LlmProvider>>,
     reasoning_chains: Vec<ReasoningChain>,
@@ -64,10 +64,10 @@ impl SmartRouter {
         providers: HashMap<String, Arc<dyn LlmProvider>>,
     ) -> Self {
         let reasoning_chains = Self::default_reasoning_chains();
-        
+
         Self {
             config,
-            db,
+            _db: db,
             cost_optimizer,
             providers,
             reasoning_chains,
@@ -76,10 +76,17 @@ impl SmartRouter {
     }
 
     /// Main routing logic - decides which model(s) to use
-    pub async fn route_request(&self, mut request: ChatRequest, endpoint: &str) -> Result<RoutingDecision> {
+    pub async fn route_request(
+        &self,
+        mut request: ChatRequest,
+        endpoint: &str,
+    ) -> Result<RoutingDecision> {
         // Step 0: Explicit endpoint mapping (Tiered Autonomy - Default)
         if let Some(mapped_model) = self.config.endpoints.get(endpoint) {
-            debug!("Using explicit mapping for endpoint {}: {}", endpoint, mapped_model);
+            debug!(
+                "Using explicit mapping for endpoint {}: {}",
+                endpoint, mapped_model
+            );
             request.model = mapped_model.clone();
             return Ok(RoutingDecision::Direct(request));
         }
@@ -89,7 +96,7 @@ impl SmartRouter {
         }
 
         debug!("Smart routing request for model: {}", request.model);
-        
+
         // Step 1: Assess complexity for potential reasoning chains
         let complexity = self.assess_complexity(&request);
         if let Some(chain) = self.select_reasoning_chain(complexity) {
@@ -99,7 +106,10 @@ impl SmartRouter {
 
         // Step 2: Check for cost optimization opportunities
         // (In Smart Mode, we always analyze for optimizations)
-        let optimization = self.cost_optimizer.analyze_request(&request, endpoint).await?;
+        let optimization = self
+            .cost_optimizer
+            .analyze_request(&request, endpoint)
+            .await?;
 
         // Step 3: Check for A/B testing
         if let Some(ab_test_model) = self.check_ab_test(&request).await? {
@@ -109,13 +119,16 @@ impl SmartRouter {
         }
 
         // Step 4: Apply optimization if found and confidence is high
-        if let Some(opt) = optimization {
-            if opt.confidence_score > 0.7 && self.should_apply_optimization(&opt) {
-                info!("Applying optimization: {} -> {} ({}% savings)", 
-                     opt.original_model, opt.suggested_model, opt.potential_savings_percent);
-                request.model = opt.suggested_model.clone();
-                return Ok(RoutingDecision::Optimized(request, opt));
-            }
+        if let Some(opt) = optimization
+            && opt.confidence_score > 0.7
+            && self.should_apply_optimization(&opt)
+        {
+            info!(
+                "Applying optimization: {} -> {} ({}% savings)",
+                opt.original_model, opt.suggested_model, opt.potential_savings_percent
+            );
+            request.model = opt.suggested_model.clone();
+            return Ok(RoutingDecision::Optimized(request, opt));
         }
 
         Ok(RoutingDecision::Direct(request))
@@ -126,16 +139,17 @@ impl SmartRouter {
         match decision {
             RoutingDecision::Direct(request) => {
                 self.execute_with_fallback(request, "direct", None).await
-            },
-            
+            }
+
             RoutingDecision::Optimized(request, optimization) => {
-                self.execute_with_fallback(request, "optimized", Some(optimization)).await
-            },
-            
+                self.execute_with_fallback(request, "optimized", Some(optimization))
+                    .await
+            }
+
             RoutingDecision::Chain(chain, original_request) => {
                 self.execute_reasoning_chain(chain, original_request).await
-            },
-            
+            }
+
             RoutingDecision::AbTest(request) => {
                 self.execute_with_fallback(request, "ab_test", None).await
             }
@@ -147,46 +161,52 @@ impl SmartRouter {
         &self,
         request: ChatRequest,
         routing_type: &str,
-        optimization: Option<OptimizationSuggestion>
+        optimization: Option<OptimizationSuggestion>,
     ) -> Result<SmartRoutingResult> {
         let mut current_model = request.model.clone();
         let mut attempts = 0;
         let mut models_used = Vec::new();
         let mut quality_scores = Vec::new();
-        let mut total_latency = 0u32;
-        let mut final_response = None;
         let mut final_routing_type = routing_type.to_string();
         let start_routing_time = std::time::Instant::now();
 
-        loop {
+        let final_response = loop {
             attempts += 1;
             models_used.push(current_model.clone());
 
             let provider = self.get_provider(&current_model)?;
-            let result = provider.chat_completion(ChatRequest {
-                model: current_model.clone(),
-                ..request.clone()
-            }).await;
-
-            total_latency = start_routing_time.elapsed().as_millis() as u32;
+            let result = provider
+                .chat_completion(ChatRequest {
+                    model: current_model.clone(),
+                    ..request.clone()
+                })
+                .await;
 
             match result {
                 Ok(response) => {
                     let quality = self.score_response_quality(&response, "general");
 
                     // Check if quality is sufficient or we should fallback
-                    if quality >= self.config.quality_threshold || attempts >= 2 || current_model.contains("claude") {
-                        final_response = Some(response);
+                    if quality >= self.config.quality_threshold
+                        || attempts >= 2
+                        || current_model.contains("claude")
+                    {
                         quality_scores.push(quality);
-                        break;
+                        break response;
                     } else {
-                        info!("Low quality response from {} (score: {:.2}). Attempting quality rescue.", current_model, quality);
+                        info!(
+                            "Low quality response from {} (score: {:.2}). Attempting quality rescue.",
+                            current_model, quality
+                        );
                         quality_scores.push(quality);
                         final_routing_type = "quality_rescue".to_string();
                     }
-                },
+                }
                 Err(e) => {
-                    warn!("Request to {} failed: {}. Attempting fallback.", current_model, e);
+                    warn!(
+                        "Request to {} failed: {}. Attempting fallback.",
+                        current_model, e
+                    );
                     final_routing_type = "fallback".to_string();
                     if attempts >= 2 {
                         return Err(e);
@@ -209,34 +229,45 @@ impl SmartRouter {
                     current_model = "gpt-4o".to_string(); // Default fallback
                 }
             }
-        }
+        };
 
         Ok(SmartRoutingResult {
-            response: final_response.expect("Should have a response"),
+            response: final_response,
             routing_type: final_routing_type,
             models_used,
-            total_latency,
+            total_latency: start_routing_time.elapsed().as_millis() as u32,
             optimization_applied: optimization,
             quality_scores,
         })
     }
 
     fn find_fallback_model(&self, current_model: &str) -> Option<String> {
-        self.config.fallback_rules.iter()
+        self.config
+            .fallback_rules
+            .iter()
             .find(|r| r.on_model == current_model)
             .map(|r| r.fallback_to.clone())
     }
 
     /// Execute a multi-model reasoning chain
-    async fn execute_reasoning_chain(&self, chain: ReasoningChain, original_request: ChatRequest) -> Result<SmartRoutingResult> {
+    async fn execute_reasoning_chain(
+        &self,
+        chain: ReasoningChain,
+        original_request: ChatRequest,
+    ) -> Result<SmartRoutingResult> {
         let mut current_messages = original_request.messages.clone();
         let mut models_used = Vec::new();
         let mut quality_scores = Vec::new();
         let mut total_latency = 0u32;
 
         for (i, step) in chain.steps.iter().enumerate() {
-            info!("Executing chain step {}: {} with {}", i + 1, step.purpose, step.model);
-            
+            info!(
+                "Executing chain step {}: {} with {}",
+                i + 1,
+                step.purpose,
+                step.model
+            );
+
             let step_request = ChatRequest {
                 model: step.model.clone(),
                 messages: current_messages.clone(),
@@ -249,7 +280,7 @@ impl SmartRouter {
             let step_start = std::time::Instant::now();
             let step_response = provider.chat_completion(step_request).await?;
             let step_latency = step_start.elapsed().as_millis() as u32;
-            
+
             total_latency += step_latency;
             models_used.push(step.model.clone());
 
@@ -263,7 +294,7 @@ impl SmartRouter {
                     role: "assistant".to_string(),
                     content: choice.message.content.clone(),
                 });
-                
+
                 // If this is not the last step, add a context message for the next model
                 if i < chain.steps.len() - 1 {
                     let next_step = &chain.steps[i + 1];
@@ -288,9 +319,15 @@ impl SmartRouter {
         })
     }
 
-    fn create_chain_response(&self, chain: &ReasoningChain, messages: &[crate::provider::ChatMessage], _latency: u32) -> ChatResponse {
+    fn create_chain_response(
+        &self,
+        chain: &ReasoningChain,
+        messages: &[crate::provider::ChatMessage],
+        _latency: u32,
+    ) -> ChatResponse {
         // Find the last assistant message
-        let final_content = messages.iter()
+        let final_content = messages
+            .iter()
             .rev()
             .find(|msg| msg.role == "assistant")
             .map(|msg| msg.content.clone())
@@ -317,8 +354,12 @@ impl SmartRouter {
         // Simple heuristic quality scoring
         if let Some(choice) = response.choices.first() {
             let content = &choice.message.content;
+            let content_lower = match purpose {
+                "analyze" | "verify" => Some(content.to_ascii_lowercase()),
+                _ => None,
+            };
             let mut score: f32 = 0.5; // Base score
-            
+
             // Length-based scoring (not too short, not too verbose)
             match content.len() {
                 0..=10 => score *= 0.3,
@@ -327,29 +368,33 @@ impl SmartRouter {
                 501..=2000 => score *= 0.9,
                 _ => score *= 0.8,
             }
-            
+
             // Purpose-specific scoring
             match purpose {
                 "analyze" => {
-                    if content.to_lowercase().contains("because") || 
-                       content.to_lowercase().contains("therefore") {
+                    if content_lower
+                        .as_ref()
+                        .is_some_and(|s| s.contains("because") || s.contains("therefore"))
+                    {
                         score *= 1.2;
                     }
-                },
+                }
                 "simplify" => {
                     if content.len() < 300 && !content.contains("complex") {
                         score *= 1.1;
                     }
-                },
+                }
                 "verify" => {
-                    if content.to_lowercase().contains("correct") || 
-                       content.to_lowercase().contains("accurate") {
+                    if content_lower
+                        .as_ref()
+                        .is_some_and(|s| s.contains("correct") || s.contains("accurate"))
+                    {
                         score *= 1.1;
                     }
-                },
+                }
                 _ => {}
             }
-            
+
             score.min(1.0)
         } else {
             0.1 // Very low score for empty response
@@ -362,19 +407,18 @@ impl SmartRouter {
     }
 
     fn select_reasoning_chain(&self, complexity: f32) -> Option<ReasoningChain> {
-        self.reasoning_chains.iter()
+        self.reasoning_chains
+            .iter()
             .filter(|chain| complexity >= chain.complexity_threshold)
-            .max_by(|a, b| a.complexity_threshold.partial_cmp(&b.complexity_threshold).unwrap())
+            .max_by(|a, b| a.complexity_threshold.total_cmp(&b.complexity_threshold))
             .cloned()
     }
 
     async fn check_ab_test(&self, request: &ChatRequest) -> Result<Option<String>> {
-        let mut rng = rand::thread_rng();
-        
         // Find active A/B test for this model
         for ab_test in self.ab_tests.values() {
             if ab_test.active && ab_test.models.contains(&request.model) {
-                let test_roll: f32 = rng.gen();
+                let test_roll = self.ab_test_roll(request, ab_test);
                 let mut cumulative = 0.0;
 
                 for (i, &split) in ab_test.traffic_split.iter().enumerate() {
@@ -389,17 +433,29 @@ impl SmartRouter {
         Ok(None)
     }
 
+    fn ab_test_roll(&self, request: &ChatRequest, ab_test: &AbTest) -> f32 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        ab_test.name.hash(&mut hasher);
+        request.model.hash(&mut hasher);
+        ab_test.start_time.timestamp().hash(&mut hasher);
+        for message in &request.messages {
+            message.role.hash(&mut hasher);
+            message.content.hash(&mut hasher);
+        }
+        (hasher.finish() as f64 / u64::MAX as f64) as f32
+    }
+
     fn should_apply_optimization(&self, optimization: &OptimizationSuggestion) -> bool {
         // Only apply if quality impact is acceptable
         if optimization.quality_impact < -0.2 {
             return false; // Too much quality loss
         }
-        
+
         // Only apply if savings are significant
         if optimization.potential_savings_percent < 15.0 {
             return false;
         }
-        
+
         true
     }
 
@@ -425,9 +481,10 @@ impl SmartRouter {
             model // Assume provider name matches model name
         };
 
-        self.providers.get(provider_name)
+        self.providers
+            .get(provider_name)
             .ok_or_else(|| anyhow::anyhow!("Provider not found for model: {}", model))
-            .map(|p| p.clone())
+            .cloned()
     }
 
     pub fn add_ab_test(&mut self, name: String, models: Vec<String>, traffic_split: Vec<f32>) {
@@ -453,7 +510,8 @@ impl SmartRouter {
         vec![
             ReasoningChain {
                 name: "analyze_then_simplify".to_string(),
-                description: "Use a powerful model to analyze, then a fast model to simplify".to_string(),
+                description: "Use a powerful model to analyze, then a fast model to simplify"
+                    .to_string(),
                 complexity_threshold: 0.8,
                 steps: vec![
                     ChainStep {
@@ -518,19 +576,29 @@ mod tests {
     #[test]
     fn test_complexity_based_chain_selection() {
         let chains = SmartRouter::default_reasoning_chains();
-        
+
         // Simple request shouldn't trigger any chain
         let simple_complexity = 0.3;
-        let selected = chains.iter()
+        let selected = chains
+            .iter()
             .filter(|chain| simple_complexity >= chain.complexity_threshold)
-            .max_by(|a, b| a.complexity_threshold.partial_cmp(&b.complexity_threshold).unwrap());
+            .max_by(|a, b| {
+                a.complexity_threshold
+                    .partial_cmp(&b.complexity_threshold)
+                    .unwrap()
+            });
         assert!(selected.is_none());
-        
+
         // Complex request should trigger highest applicable chain
         let complex_complexity = 0.9;
-        let selected = chains.iter()
+        let selected = chains
+            .iter()
             .filter(|chain| complex_complexity >= chain.complexity_threshold)
-            .max_by(|a, b| a.complexity_threshold.partial_cmp(&b.complexity_threshold).unwrap());
+            .max_by(|a, b| {
+                a.complexity_threshold
+                    .partial_cmp(&b.complexity_threshold)
+                    .unwrap()
+            });
         assert!(selected.is_some());
         assert_eq!(selected.unwrap().name, "dual_verification");
     }

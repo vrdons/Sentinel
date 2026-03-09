@@ -1,13 +1,18 @@
-use axum::{extract::State, Json, response::sse::{Event, Sse}, response::IntoResponse};
+use crate::cache::hash_request;
 use crate::provider::ChatRequest;
 use crate::proxy::ProxyState;
 use crate::storage::db::RequestLog;
-use crate::cache::hash_request;
-use std::sync::Arc;
-use tracing::{info, error};
-use uuid::Uuid;
+use axum::{
+    Json,
+    extract::State,
+    response::IntoResponse,
+    response::sse::{Event, Sse},
+};
 use chrono::Utc;
 use futures_util::stream::StreamExt;
+use std::sync::Arc;
+use tracing::{error, info};
+use uuid::Uuid;
 
 pub async fn chat_completion(
     State(state): State<Arc<ProxyState>>,
@@ -30,14 +35,22 @@ pub async fn chat_completion(
     if !request.stream {
         let cache_key = hash_request(&request);
         info!("Cache key for request {}: {}", request_id, cache_key);
-        
+
         // First check exact match cache
         if let Some(cached_response) = state.cache.get(&cache_key) {
             info!("Exact cache hit for request {}", request_id);
 
-            let original_cost = cached_response.usage.as_ref().map(|u| {
-                state.pricing.calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens)
-            }).unwrap_or(0.0);
+            let original_cost = cached_response
+                .usage
+                .as_ref()
+                .map(|u| {
+                    state.pricing.calculate_cost(
+                        &request.model,
+                        u.prompt_tokens,
+                        u.completion_tokens,
+                    )
+                })
+                .unwrap_or(0.0);
 
             // Log cache hit
             let log = RequestLog {
@@ -46,7 +59,11 @@ pub async fn chat_completion(
                 provider: "cache".to_string(),
                 model: request.model.clone(),
                 input_tokens: 0,
-                output_tokens: cached_response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
+                output_tokens: cached_response
+                    .usage
+                    .as_ref()
+                    .map(|u| u.completion_tokens)
+                    .unwrap_or(0),
                 latency_ms: 0,
                 cost_usd: 0.0,
                 cost_saved: original_cost,
@@ -66,15 +83,24 @@ pub async fn chat_completion(
             let response = cached_response.value().clone();
             return Ok(Json(response).into_response());
         }
-        
+
         // Then check semantic cache if available
         if let Some(semantic_cache) = &state.semantic_cache {
             if let Ok(Some(cached_res)) = semantic_cache.get_similar(&request).await {
                 info!("Semantic cache hit for request {}", request_id);
 
-                let original_cost = cached_res.response.usage.as_ref().map(|u| {
-                    state.pricing.calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens)
-                }).unwrap_or(0.0);
+                let original_cost = cached_res
+                    .response
+                    .usage
+                    .as_ref()
+                    .map(|u| {
+                        state.pricing.calculate_cost(
+                            &request.model,
+                            u.prompt_tokens,
+                            u.completion_tokens,
+                        )
+                    })
+                    .unwrap_or(0.0);
 
                 // Log semantic cache hit
                 let log = RequestLog {
@@ -83,7 +109,12 @@ pub async fn chat_completion(
                     provider: "semantic-cache".to_string(),
                     model: request.model.clone(),
                     input_tokens: 0,
-                    output_tokens: cached_res.response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
+                    output_tokens: cached_res
+                        .response
+                        .usage
+                        .as_ref()
+                        .map(|u| u.completion_tokens)
+                        .unwrap_or(0),
                     latency_ms: 0,
                     cost_usd: 0.0,
                     cost_saved: original_cost,
@@ -123,25 +154,47 @@ async fn handle_smart_routing(
 
     let decision = {
         let router = state.smart_router.read().await;
-        router.route_request(request.clone(), "/v1/chat/completions").await
+        router
+            .route_request(request.clone(), "/v1/chat/completions")
+            .await
             .map_err(|e| format!("Routing error: {}", e))?
     };
 
     let result = {
         let router = state.smart_router.read().await;
-        router.execute_routing(decision).await
+        router
+            .execute_routing(decision)
+            .await
             .map_err(|e| format!("Execution error: {}", e))?
     };
 
-    let latency = Utc::now().signed_duration_since(start_time).num_milliseconds() as u32;
+    let latency = Utc::now()
+        .signed_duration_since(start_time)
+        .num_milliseconds() as u32;
 
-    let actual_cost = result.response.usage.as_ref().map(|u| {
-        state.pricing.calculate_cost(&result.response.model, u.prompt_tokens, u.completion_tokens)
-    }).unwrap_or(0.0);
+    let actual_cost = result
+        .response
+        .usage
+        .as_ref()
+        .map(|u| {
+            state.pricing.calculate_cost(
+                &result.response.model,
+                u.prompt_tokens,
+                u.completion_tokens,
+            )
+        })
+        .unwrap_or(0.0);
 
-    let original_cost = result.response.usage.as_ref().map(|u| {
-        state.pricing.calculate_cost(&original_model, u.prompt_tokens, u.completion_tokens)
-    }).unwrap_or(0.0);
+    let original_cost = result
+        .response
+        .usage
+        .as_ref()
+        .map(|u| {
+            state
+                .pricing
+                .calculate_cost(&original_model, u.prompt_tokens, u.completion_tokens)
+        })
+        .unwrap_or(0.0);
 
     let cost_saved = (original_cost - actual_cost).max(0.0);
 
@@ -168,8 +221,18 @@ async fn handle_smart_routing(
         timestamp: Utc::now(),
         provider: result.routing_type.clone(),
         model: result.response.model.clone(),
-        input_tokens: result.response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0),
-        output_tokens: result.response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
+        input_tokens: result
+            .response
+            .usage
+            .as_ref()
+            .map(|u| u.prompt_tokens)
+            .unwrap_or(0),
+        output_tokens: result
+            .response
+            .usage
+            .as_ref()
+            .map(|u| u.completion_tokens)
+            .unwrap_or(0),
         latency_ms: latency,
         cost_usd: actual_cost,
         cost_saved,
@@ -200,7 +263,9 @@ async fn handle_streaming(
     // 1. Get routing decision
     let decision = {
         let router = state.smart_router.read().await;
-        router.route_request(request.clone(), "/v1/chat/completions").await
+        router
+            .route_request(request.clone(), "/v1/chat/completions")
+            .await
             .map_err(|e| format!("Routing error: {}", e))?
     };
 
@@ -209,15 +274,15 @@ async fn handle_streaming(
         crate::router::smart::RoutingDecision::Direct(req) => {
             request = req;
             "direct".to_string()
-        },
+        }
         crate::router::smart::RoutingDecision::Optimized(req, _) => {
             request = req;
             "optimized".to_string()
-        },
+        }
         crate::router::smart::RoutingDecision::AbTest(req) => {
             request = req;
             "ab_test".to_string()
-        },
+        }
         crate::router::smart::RoutingDecision::Chain(_, req) => {
             request = req;
             "chain_started".to_string() // Chains are tricky with streaming, we use the first model tier
@@ -239,20 +304,21 @@ async fn handle_streaming(
         fallback.unwrap_or_else(|| state.primary_provider.provider.clone())
     };
 
-    info!("Streaming request {} routed to {} via {}", request_id, request.model, routing_type);
+    info!(
+        "Streaming request {} routed to {} via {}",
+        request_id, request.model, routing_type
+    );
 
     match provider.chat_completion_stream(request).await {
         Ok(stream) => {
-            let sse_stream = stream.map(move |chunk_res| {
-                match chunk_res {
-                    Ok(chunk) => {
-                        match serde_json::to_string(&chunk) {
-                            Ok(json) => Ok::<Event, Infallible>(Event::default().data(json)),
-                            Err(e) => Ok::<Event, Infallible>(Event::default().data(format!("Error: {}", e))),
-                        }
+            let sse_stream = stream.map(move |chunk_res| match chunk_res {
+                Ok(chunk) => match serde_json::to_string(&chunk) {
+                    Ok(json) => Ok::<Event, Infallible>(Event::default().data(json)),
+                    Err(e) => {
+                        Ok::<Event, Infallible>(Event::default().data(format!("Error: {}", e)))
                     }
-                    Err(e) => Ok::<Event, Infallible>(Event::default().data(format!("Error: {}", e))),
-                }
+                },
+                Err(e) => Ok::<Event, Infallible>(Event::default().data(format!("Error: {}", e))),
             });
             Ok(Sse::new(sse_stream).into_response())
         }

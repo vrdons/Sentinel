@@ -1,2 +1,2 @@
-pub mod pricing;
 pub mod optimization;
+pub mod pricing;

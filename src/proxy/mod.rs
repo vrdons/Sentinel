@@ -2,17 +2,17 @@ pub mod handlers;
 pub mod middleware;
 pub mod pii;
 
-use axum::{routing::post, Router};
-use std::sync::Arc;
-use crate::provider::LlmProvider;
-use crate::config::AppConfig;
-use crate::storage::db::Database;
-use crate::cost::pricing::PricingTable;
-use dashmap::DashMap;
-use crate::provider::ChatResponse;
-use crate::proxy::pii::PiiRedactor;
 use crate::cache::semantic::SemanticCache;
+use crate::config::AppConfig;
+use crate::cost::pricing::PricingTable;
+use crate::provider::ChatResponse;
+use crate::provider::LlmProvider;
+use crate::proxy::pii::PiiRedactor;
 use crate::router::smart::SmartRouter;
+use crate::storage::db::Database;
+use axum::{Router, routing::post};
+use dashmap::DashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
@@ -61,15 +61,18 @@ impl ProviderHealth {
 
 pub async fn check_all_providers(state: &ProxyState) -> Vec<(String, bool)> {
     let mut results = Vec::new();
-    
+
     let primary_healthy = state.primary_provider.health_check().await;
-    results.push((state.primary_provider.provider.name().to_string(), primary_healthy));
-    
+    results.push((
+        state.primary_provider.provider.name().to_string(),
+        primary_healthy,
+    ));
+
     for fallback in &state.fallback_providers {
         let healthy = fallback.health_check().await;
         results.push((fallback.provider.name().to_string(), healthy));
     }
-    
+
     results
 }
 

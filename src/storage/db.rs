@@ -1,9 +1,9 @@
-use libsql::Connection;
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use libsql::Connection;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RequestLog {
@@ -82,7 +82,8 @@ impl Database {
                 error_message TEXT
             )",
             (),
-        ).await?;
+        )
+        .await?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS cost_optimizations (
@@ -97,7 +98,8 @@ impl Database {
                 status TEXT
             )",
             (),
-        ).await?;
+        )
+        .await?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS quality_metrics (
@@ -111,12 +113,28 @@ impl Database {
                 user_feedback TEXT
             )",
             (),
-        ).await?;
+        )
+        .await?;
 
         // Migrations
-        let _ = conn.execute("ALTER TABLE logs ADD COLUMN pii_redacted INTEGER DEFAULT 0", ()).await;
-        let _ = conn.execute("ALTER TABLE logs ADD COLUMN cost_saved REAL DEFAULT 0.0", ()).await;
-        let _ = conn.execute("ALTER TABLE logs ADD COLUMN quality_score REAL DEFAULT 0.5", ()).await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE logs ADD COLUMN pii_redacted INTEGER DEFAULT 0",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE logs ADD COLUMN cost_saved REAL DEFAULT 0.0",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE logs ADD COLUMN quality_score REAL DEFAULT 0.5",
+                (),
+            )
+            .await;
 
         Ok(Self { conn })
     }
@@ -163,7 +181,8 @@ impl Database {
         while let Some(row) = rows.next().await? {
             logs.push(RequestLog {
                 id: Uuid::parse_str(&row.get::<String>(0)?)?,
-                timestamp: DateTime::parse_from_rfc3339(&row.get::<String>(1)?)?.with_timezone(&Utc),
+                timestamp: DateTime::parse_from_rfc3339(&row.get::<String>(1)?)?
+                    .with_timezone(&Utc),
                 provider: row.get::<String>(2)?,
                 model: row.get::<String>(3)?,
                 input_tokens: row.get::<u32>(4)?,
@@ -182,8 +201,10 @@ impl Database {
     }
 
     pub async fn get_stats(&self) -> anyhow::Result<serde_json::Value> {
-        let mut rows = self.conn.query(
-            "SELECT
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT
                 COUNT(*),
                 SUM(cost_usd),
                 AVG(latency_ms),
@@ -191,19 +212,23 @@ impl Database {
                 SUM(pii_redacted),
                 SUM(COALESCE(cost_saved, 0.0))
              FROM logs",
-            (),
-        ).await?;
+                (),
+            )
+            .await?;
 
         if let Some(row) = rows.next().await? {
             let total_cost = row.get::<f64>(1).unwrap_or(0.0);
             let total_saved = row.get::<f64>(5).unwrap_or(0.0);
 
             // Get current month savings
-            let mut monthly_rows = self.conn.query(
-                "SELECT SUM(COALESCE(cost_saved, 0.0)) FROM logs
+            let mut monthly_rows = self
+                .conn
+                .query(
+                    "SELECT SUM(COALESCE(cost_saved, 0.0)) FROM logs
                  WHERE strftime('%Y-%m', timestamp) = strftime('%Y-%m', 'now')",
-                (),
-            ).await?;
+                    (),
+                )
+                .await?;
 
             let monthly_saved = if let Some(m_row) = monthly_rows.next().await? {
                 m_row.get::<f64>(0).unwrap_or(0.0)
@@ -226,23 +251,25 @@ impl Database {
     }
 
     pub async fn log_cost_optimization(&self, opt: &CostOptimization) -> anyhow::Result<()> {
-        self.conn.execute(
-            "INSERT INTO cost_optimizations (
+        self.conn
+            .execute(
+                "INSERT INTO cost_optimizations (
                 id, timestamp, endpoint_pattern, original_model, suggested_model,
                 potential_savings_percent, confidence_score, reason, status
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            libsql::params![
-                opt.id.to_string(),
-                opt.timestamp.to_rfc3339(),
-                opt.endpoint_pattern.clone(),
-                opt.original_model.clone(),
-                opt.suggested_model.clone(),
-                opt.potential_savings_percent,
-                opt.confidence_score,
-                opt.reason.clone(),
-                opt.status.clone(),
-            ],
-        ).await?;
+                libsql::params![
+                    opt.id.to_string(),
+                    opt.timestamp.to_rfc3339(),
+                    opt.endpoint_pattern.clone(),
+                    opt.original_model.clone(),
+                    opt.suggested_model.clone(),
+                    opt.potential_savings_percent,
+                    opt.confidence_score,
+                    opt.reason.clone(),
+                    opt.status.clone(),
+                ],
+            )
+            .await?;
 
         Ok(())
     }
@@ -259,7 +286,8 @@ impl Database {
         while let Some(row) = rows.next().await? {
             opts.push(CostOptimization {
                 id: Uuid::parse_str(&row.get::<String>(0)?)?,
-                timestamp: DateTime::parse_from_rfc3339(&row.get::<String>(1)?)?.with_timezone(&Utc),
+                timestamp: DateTime::parse_from_rfc3339(&row.get::<String>(1)?)?
+                    .with_timezone(&Utc),
                 endpoint_pattern: row.get::<String>(2)?,
                 original_model: row.get::<String>(3)?,
                 suggested_model: row.get::<String>(4)?,
@@ -273,29 +301,33 @@ impl Database {
     }
 
     pub async fn log_quality_metric(&self, metric: &QualityMetric) -> anyhow::Result<()> {
-        self.conn.execute(
-            "INSERT INTO quality_metrics (
+        self.conn
+            .execute(
+                "INSERT INTO quality_metrics (
                 id, timestamp, model, prompt_hash, response_quality,
                 latency_score, cost_efficiency, user_feedback
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            libsql::params![
-                metric.id.to_string(),
-                metric.timestamp.to_rfc3339(),
-                metric.model.clone(),
-                metric.prompt_hash.clone(),
-                metric.response_quality,
-                metric.latency_score,
-                metric.cost_efficiency,
-                metric.user_feedback.clone(),
-            ],
-        ).await?;
+                libsql::params![
+                    metric.id.to_string(),
+                    metric.timestamp.to_rfc3339(),
+                    metric.model.clone(),
+                    metric.prompt_hash.clone(),
+                    metric.response_quality,
+                    metric.latency_score,
+                    metric.cost_efficiency,
+                    metric.user_feedback.clone(),
+                ],
+            )
+            .await?;
 
         Ok(())
     }
 
     pub async fn get_monthly_savings(&self, months_back: i32) -> anyhow::Result<serde_json::Value> {
-        let mut rows = self.conn.query(
-            "SELECT 
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT 
                 strftime('%Y-%m', timestamp) as month,
                 SUM(COALESCE(cost_saved, 0.0)) as monthly_saved,
                 COUNT(*) as requests,
@@ -304,16 +336,17 @@ impl Database {
              WHERE datetime(timestamp) >= datetime('now', '-' || ?1 || ' months')
              GROUP BY strftime('%Y-%m', timestamp)
              ORDER BY month DESC",
-            libsql::params![months_back],
-        ).await?;
+                libsql::params![months_back],
+            )
+            .await?;
 
         let mut monthly_data = Vec::new();
         let mut total_saved = 0.0;
-        
+
         while let Some(row) = rows.next().await? {
             let saved = row.get::<f64>(1).unwrap_or(0.0);
             total_saved += saved;
-            
+
             monthly_data.push(serde_json::json!({
                 "month": row.get::<String>(0)?,
                 "saved": saved,
@@ -329,8 +362,10 @@ impl Database {
     }
 
     pub async fn get_model_performance_stats(&self) -> anyhow::Result<serde_json::Value> {
-        let mut rows = self.conn.query(
-            "SELECT 
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT 
                 model,
                 COUNT(*) as requests,
                 AVG(latency_ms) as avg_latency,
@@ -341,16 +376,21 @@ impl Database {
              WHERE datetime(timestamp) >= datetime('now', '-30 days')
              GROUP BY model
              ORDER BY requests DESC",
-            (),
-        ).await?;
+                (),
+            )
+            .await?;
 
         let mut model_stats = Vec::new();
-        
+
         while let Some(row) = rows.next().await? {
             let avg_cost = row.get::<f64>(3).unwrap_or(0.0);
             let avg_quality = row.get::<f64>(4).unwrap_or(0.5);
-            let quality_per_dollar = if avg_cost > 0.0 { avg_quality / avg_cost } else { 0.0 };
-            
+            let quality_per_dollar = if avg_cost > 0.0 {
+                avg_quality / avg_cost
+            } else {
+                0.0
+            };
+
             model_stats.push(serde_json::json!({
                 "model": row.get::<String>(0)?,
                 "requests": row.get::<u32>(1)?,

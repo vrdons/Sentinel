@@ -1,8 +1,11 @@
-use crate::provider::{ChatRequest, ChatResponse, ChatResponseChunk, ChatChoice, ChatChunkChoice, ChatMessage, ChatChunkDelta, LlmProvider, Usage};
+use crate::provider::{
+    ChatChoice, ChatChunkChoice, ChatChunkDelta, ChatMessage, ChatRequest, ChatResponse,
+    ChatResponseChunk, LlmProvider, Usage,
+};
 use async_trait::async_trait;
+use futures_util::stream::{BoxStream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use futures_util::stream::{BoxStream, StreamExt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
@@ -22,18 +25,22 @@ impl GeminiProvider {
     }
 
     fn openai_to_gemini_request(&self, request: &ChatRequest) -> GeminiRequest {
-        let contents = request.messages.iter().map(|msg| {
-            GeminiContent {
-                role: match msg.role.as_str() {
-                    "system" => "user".to_string(), // Gemini doesn't have system role, treat as user
-                    "assistant" => "model".to_string(),
-                    _ => "user".to_string(),
-                },
-                parts: vec![GeminiPart {
-                    text: msg.content.clone(),
-                }],
-            }
-        }).collect();
+        let contents = request
+            .messages
+            .iter()
+            .map(|msg| {
+                GeminiContent {
+                    role: match msg.role.as_str() {
+                        "system" => "user".to_string(), // Gemini doesn't have system role, treat as user
+                        "assistant" => "model".to_string(),
+                        _ => "user".to_string(),
+                    },
+                    parts: vec![GeminiPart {
+                        text: msg.content.clone(),
+                    }],
+                }
+            })
+            .collect();
 
         let generation_config = GeminiGenerationConfig {
             temperature: request.temperature,
@@ -47,33 +54,43 @@ impl GeminiProvider {
         }
     }
 
-    fn gemini_to_openai_response(&self, gemini_response: GeminiResponse, model: &str) -> ChatResponse {
+    fn gemini_to_openai_response(
+        &self,
+        gemini_response: GeminiResponse,
+        model: &str,
+    ) -> ChatResponse {
         let created = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
 
-        let choices = gemini_response.candidates.into_iter().enumerate().map(|(index, candidate)| {
-            let content = candidate.content.parts.into_iter()
-                .map(|part| part.text)
-                .collect::<Vec<_>>()
-                .join("");
+        let choices = gemini_response
+            .candidates
+            .into_iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                let content = candidate
+                    .content
+                    .parts
+                    .into_iter()
+                    .map(|part| part.text)
+                    .collect::<Vec<_>>()
+                    .join("");
 
-            ChatChoice {
-                index: index as u32,
-                message: ChatMessage {
-                    role: "assistant".to_string(),
-                    content,
-                },
-                finish_reason: candidate.finish_reason.map(|reason| {
-                    match reason.as_str() {
+                ChatChoice {
+                    index: index as u32,
+                    message: ChatMessage {
+                        role: "assistant".to_string(),
+                        content,
+                    },
+                    finish_reason: candidate.finish_reason.map(|reason| match reason.as_str() {
                         "STOP" => "stop".to_string(),
                         "MAX_TOKENS" => "length".to_string(),
                         _ => reason.to_lowercase(),
-                    }
-                }),
-            }
-        }).collect();
+                    }),
+                }
+            })
+            .collect();
 
         let usage = gemini_response.usage_metadata.map(|usage| Usage {
             prompt_tokens: usage.prompt_token_count,
@@ -82,7 +99,10 @@ impl GeminiProvider {
         });
 
         ChatResponse {
-            id: format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")),
+            id: format!(
+                "chatcmpl-{}",
+                uuid::Uuid::new_v4().to_string().replace("-", "")
+            ),
             object: "chat.completion".to_string(),
             created,
             model: model.to_string(),
@@ -90,22 +110,19 @@ impl GeminiProvider {
             usage,
         }
     }
-
 }
 
 #[async_trait]
 impl LlmProvider for GeminiProvider {
     async fn chat_completion(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
         let gemini_request = self.openai_to_gemini_request(&request);
-        
-        let url = format!("{}/models/{}:generateContent?key={}", 
-                         self.base_url, request.model, self.api_key);
-        
-        let response = self.client
-            .post(&url)
-            .json(&gemini_request)
-            .send()
-            .await?;
+
+        let url = format!(
+            "{}/models/{}:generateContent?key={}",
+            self.base_url, request.model, self.api_key
+        );
+
+        let response = self.client.post(&url).json(&gemini_request).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -114,21 +131,22 @@ impl LlmProvider for GeminiProvider {
 
         let gemini_response = response.json::<GeminiResponse>().await?;
         let openai_response = self.gemini_to_openai_response(gemini_response, &request.model);
-        
+
         Ok(openai_response)
     }
 
-    async fn chat_completion_stream(&self, request: ChatRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>> {
+    async fn chat_completion_stream(
+        &self,
+        request: ChatRequest,
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>> {
         let gemini_request = self.openai_to_gemini_request(&request);
-        
-        let url = format!("{}/models/{}:streamGenerateContent?key={}&alt=sse",
-                         self.base_url, request.model, self.api_key);
-        
-        let response = self.client
-            .post(&url)
-            .json(&gemini_request)
-            .send()
-            .await?;
+
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?key={}&alt=sse",
+            self.base_url, request.model, self.api_key
+        );
+
+        let response = self.client.post(&url).json(&gemini_request).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -137,70 +155,80 @@ impl LlmProvider for GeminiProvider {
 
         let model = request.model.clone();
         let mut buffer = String::new();
-        
-        let stream = response.bytes_stream().flat_map(move |item| {
-            match item {
-                Ok(bytes) => {
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    let mut chunks = Vec::new();
-                    
-                    while let Some(line_end) = buffer.find('\n') {
-                        let line = buffer.drain(..line_end + 1).collect::<String>();
-                        let line = line.trim();
-                        
-                        if line.is_empty() || !line.starts_with("data: ") {
-                            continue;
-                        }
-                        
-                        let data = &line[6..];
-                        if data == "[DONE]" {
-                            continue;
-                        }
-                        
-                        match serde_json::from_str::<GeminiStreamResponse>(data) {
-                            Ok(gemini_chunk) => {
-                                if let Some(candidate) = gemini_chunk.candidates.first() {
-                                    let content = candidate.content.parts.iter()
-                                        .map(|part| part.text.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join("");
 
-                                    let delta = ChatChunkDelta {
-                                        role: Some("assistant".to_string()),
-                                        content: if content.is_empty() { None } else { Some(content) },
-                                    };
+        let stream = response.bytes_stream().flat_map(move |item| match item {
+            Ok(bytes) => {
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+                let mut chunks = Vec::new();
 
-                                    let chunk = ChatResponseChunk {
-                                        id: format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")),
-                                        object: "chat.completion.chunk".to_string(),
-                                        created: std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap()
-                                            .as_secs(),
-                                        model: model.clone(),
-                                        choices: vec![ChatChunkChoice {
-                                            index: 0,
-                                            delta,
-                                            finish_reason: candidate.finish_reason.as_ref().map(|reason| {
-                                                match reason.as_str() {
-                                                    "STOP" => "stop".to_string(),
-                                                    "MAX_TOKENS" => "length".to_string(),
-                                                    _ => reason.to_lowercase(),
-                                                }
-                                            }),
-                                        }],
-                                    };
-                                    chunks.push(Ok(chunk));
-                                }
-                            },
-                            Err(e) => chunks.push(Err(anyhow::anyhow!("Failed to parse Gemini chunk: {}", e))),
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer.drain(..line_end + 1).collect::<String>();
+                    let line = line.trim();
+
+                    if line.is_empty() || !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        continue;
+                    }
+
+                    match serde_json::from_str::<GeminiStreamResponse>(data) {
+                        Ok(gemini_chunk) => {
+                            if let Some(candidate) = gemini_chunk.candidates.first() {
+                                let content = candidate
+                                    .content
+                                    .parts
+                                    .iter()
+                                    .map(|part| part.text.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("");
+
+                                let delta = ChatChunkDelta {
+                                    role: Some("assistant".to_string()),
+                                    content: if content.is_empty() {
+                                        None
+                                    } else {
+                                        Some(content)
+                                    },
+                                };
+
+                                let chunk = ChatResponseChunk {
+                                    id: format!(
+                                        "chatcmpl-{}",
+                                        uuid::Uuid::new_v4().to_string().replace("-", "")
+                                    ),
+                                    object: "chat.completion.chunk".to_string(),
+                                    created: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_secs(),
+                                    model: model.clone(),
+                                    choices: vec![ChatChunkChoice {
+                                        index: 0,
+                                        delta,
+                                        finish_reason: candidate.finish_reason.as_ref().map(
+                                            |reason| match reason.as_str() {
+                                                "STOP" => "stop".to_string(),
+                                                "MAX_TOKENS" => "length".to_string(),
+                                                _ => reason.to_lowercase(),
+                                            },
+                                        ),
+                                    }],
+                                };
+                                chunks.push(Ok(chunk));
+                            }
+                        }
+                        Err(e) => {
+                            chunks.push(Err(anyhow::anyhow!("Failed to parse Gemini chunk: {}", e)))
                         }
                     }
-                    
-                    futures_util::stream::iter(chunks)
                 }
-                Err(e) => futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))]),
+
+                futures_util::stream::iter(chunks)
             }
+            Err(e) => futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))]),
         });
 
         Ok(Box::pin(stream))
@@ -208,16 +236,16 @@ impl LlmProvider for GeminiProvider {
 
     async fn health_check(&self) -> anyhow::Result<()> {
         let url = format!("{}/models?key={}", self.base_url, self.api_key);
-        
-        let response = self.client
-            .get(&url)
-            .send()
-            .await?;
+
+        let response = self.client.get(&url).send().await?;
 
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Gemini health check failed: {}", response.status()))
+            Err(anyhow::anyhow!(
+                "Gemini health check failed: {}",
+                response.status()
+            ))
         }
     }
 

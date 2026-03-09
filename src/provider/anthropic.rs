@@ -1,8 +1,11 @@
-use crate::provider::{ChatRequest, ChatResponse, ChatResponseChunk, LlmProvider, ChatChoice, ChatMessage, Usage, ChatChunkChoice, ChatChunkDelta};
+use crate::provider::{
+    ChatChoice, ChatChunkChoice, ChatChunkDelta, ChatMessage, ChatRequest, ChatResponse,
+    ChatResponseChunk, LlmProvider, Usage,
+};
 use async_trait::async_trait;
+use futures_util::stream::{BoxStream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use futures_util::stream::{BoxStream, StreamExt};
 
 #[derive(Debug)]
 pub struct AnthropicProvider {
@@ -90,16 +93,21 @@ impl LlmProvider for AnthropicProvider {
     async fn chat_completion(&self, request: ChatRequest) -> anyhow::Result<ChatResponse> {
         let anthropic_request = AnthropicRequest {
             model: request.model.clone(),
-            messages: request.messages.iter().map(|m| AnthropicMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            }).collect(),
+            messages: request
+                .messages
+                .iter()
+                .map(|m| AnthropicMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect(),
             max_tokens: request.max_tokens.unwrap_or(1024),
             temperature: request.temperature,
             stream: if request.stream { Some(true) } else { None },
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -123,7 +131,11 @@ impl LlmProvider for AnthropicProvider {
                 index: 0,
                 message: ChatMessage {
                     role: anth_res.role,
-                    content: anth_res.content.first().map(|c| c.text.clone()).unwrap_or_default(),
+                    content: anth_res
+                        .content
+                        .first()
+                        .map(|c| c.text.clone())
+                        .unwrap_or_default(),
                 },
                 finish_reason: Some("stop".to_string()),
             }],
@@ -137,19 +149,27 @@ impl LlmProvider for AnthropicProvider {
         Ok(chat_response)
     }
 
-    async fn chat_completion_stream(&self, request: ChatRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>> {
+    async fn chat_completion_stream(
+        &self,
+        request: ChatRequest,
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>> {
         let anthropic_request = AnthropicRequest {
             model: request.model.clone(),
-            messages: request.messages.iter().map(|m| AnthropicMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            }).collect(),
+            messages: request
+                .messages
+                .iter()
+                .map(|m| AnthropicMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect(),
             max_tokens: request.max_tokens.unwrap_or(1024),
             temperature: request.temperature,
             stream: Some(true),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -177,40 +197,40 @@ impl LlmProvider for AnthropicProvider {
                         if line.starts_with("data: ") {
                             let data = &line[6..];
                             match serde_json::from_str::<AnthropicStreamEvent>(data) {
-                                Ok(event) => {
-                                    match event {
-                                        AnthropicStreamEvent::MessageStart { message } => {
-                                            current_id = message.id.clone();
-                                            current_model = message.model.clone();
-                                        }
-                                        AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
-                                            if let AnthropicDelta::TextDelta { text } = delta {
-                                                chunks.push(Ok(ChatResponseChunk {
-                                                    id: current_id.clone(),
-                                                    object: "chat.completion.chunk".to_string(),
-                                                    created: Utc::now().timestamp() as u64,
-                                                    model: current_model.clone(),
-                                                    choices: vec![ChatChunkChoice {
-                                                        index,
-                                                        delta: ChatChunkDelta {
-                                                            role: None,
-                                                            content: Some(text),
-                                                        },
-                                                        finish_reason: None,
-                                                    }],
-                                                }));
-                                            }
-                                        }
-                                        _ => {}
+                                Ok(event) => match event {
+                                    AnthropicStreamEvent::MessageStart { message } => {
+                                        current_id = message.id.clone();
+                                        current_model = message.model.clone();
                                     }
-                                }
+                                    AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
+                                        if let AnthropicDelta::TextDelta { text } = delta {
+                                            chunks.push(Ok(ChatResponseChunk {
+                                                id: current_id.clone(),
+                                                object: "chat.completion.chunk".to_string(),
+                                                created: Utc::now().timestamp() as u64,
+                                                model: current_model.clone(),
+                                                choices: vec![ChatChunkChoice {
+                                                    index,
+                                                    delta: ChatChunkDelta {
+                                                        role: None,
+                                                        content: Some(text),
+                                                    },
+                                                    finish_reason: None,
+                                                }],
+                                            }));
+                                        }
+                                    }
+                                    _ => {}
+                                },
                                 Err(_) => {} // Ignore parse errors for non-data lines or unknown events
                             }
                         }
                     }
                     futures_util::stream::iter(chunks)
                 }
-                Err(e) => futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))]),
+                Err(e) => {
+                    futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))])
+                }
             }
         });
 
@@ -230,7 +250,8 @@ impl LlmProvider for AnthropicProvider {
             stream: None,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -241,7 +262,10 @@ impl LlmProvider for AnthropicProvider {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Anthropic health check failed: {}", response.status()))
+            Err(anyhow::anyhow!(
+                "Anthropic health check failed: {}",
+                response.status()
+            ))
         }
     }
 

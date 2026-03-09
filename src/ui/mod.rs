@@ -1,8 +1,8 @@
-use axum::{routing::get, Router, extract::State, response::Html};
-use std::sync::Arc;
 use crate::proxy::ProxyState;
 use askama::Template;
+use axum::{Router, extract::State, response::Html, routing::get};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct MonthlySaving {
@@ -85,19 +85,30 @@ async fn get_logs(State(state): State<Arc<ProxyState>>) -> Html<String> {
 }
 
 async fn get_savings(State(state): State<Arc<ProxyState>>) -> Html<String> {
-    let monthly_savings = state.db.get_monthly_savings(6).await.unwrap_or_else(|_| serde_json::json!({
-        "total_saved": 0.0,
-        "monthly_breakdown": []
-    }));
+    let monthly_savings = state.db.get_monthly_savings(6).await.unwrap_or_else(|_| {
+        serde_json::json!({
+            "total_saved": 0.0,
+            "monthly_breakdown": []
+        })
+    });
 
-    let stats = state.db.get_stats().await.unwrap_or_else(|_| serde_json::json!({}));
+    let stats = state
+        .db
+        .get_stats()
+        .await
+        .unwrap_or_else(|_| serde_json::json!({}));
 
     let total_cost = stats["total_cost"].as_f64().unwrap_or(0.0);
     let total_saved = stats["monthly_saved"].as_f64().unwrap_or(0.0);
     let original_cost = total_cost + total_saved;
-    let savings_percentage = if original_cost > 0.0 { (total_saved / original_cost) * 100.0 } else { 0.0 };
+    let savings_percentage = if original_cost > 0.0 {
+        (total_saved / original_cost) * 100.0
+    } else {
+        0.0
+    };
 
-    let monthly_data: Vec<MonthlySaving> = serde_json::from_value(monthly_savings["monthly_breakdown"].clone()).unwrap_or_default();
+    let monthly_data: Vec<MonthlySaving> =
+        serde_json::from_value(monthly_savings["monthly_breakdown"].clone()).unwrap_or_default();
 
     let template = SavingsTemplate {
         total_saved,
@@ -110,12 +121,23 @@ async fn get_savings(State(state): State<Arc<ProxyState>>) -> Html<String> {
 }
 
 async fn get_optimizations(State(state): State<Arc<ProxyState>>) -> Html<String> {
-    let optimizations = state.db.get_pending_optimizations().await.unwrap_or_default();
-    let performance = state.db.get_model_performance_stats().await.unwrap_or_else(|_| serde_json::json!({
-        "models": []
-    }));
+    let optimizations = state
+        .db
+        .get_pending_optimizations()
+        .await
+        .unwrap_or_default();
+    let performance = state
+        .db
+        .get_model_performance_stats()
+        .await
+        .unwrap_or_else(|_| {
+            serde_json::json!({
+                "models": []
+            })
+        });
 
-    let top_models: Vec<ModelStats> = serde_json::from_value(performance["models"].clone()).unwrap_or_default();
+    let top_models: Vec<ModelStats> =
+        serde_json::from_value(performance["models"].clone()).unwrap_or_default();
 
     let template = OptimizationsTemplate {
         optimizations,
@@ -126,12 +148,14 @@ async fn get_optimizations(State(state): State<Arc<ProxyState>>) -> Html<String>
 }
 
 async fn get_stats(State(state): State<Arc<ProxyState>>) -> Html<String> {
-    let stats = state.db.get_stats().await.unwrap_or_else(|_| serde_json::json!({
-        "total_requests": 0,
-        "total_cost": 0.0,
-        "avg_latency": 0.0,
-        "cache_hits": 0,
-    }));
+    let stats = state.db.get_stats().await.unwrap_or_else(|_| {
+        serde_json::json!({
+            "total_requests": 0,
+            "total_cost": 0.0,
+            "avg_latency": 0.0,
+            "cache_hits": 0,
+        })
+    });
 
     let template = StatsTemplate {
         total_requests: stats["total_requests"].as_u64().unwrap_or(0) as u32,

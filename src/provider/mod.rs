@@ -1,17 +1,17 @@
 use async_trait::async_trait;
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use futures_util::stream::BoxStream;
 use std::hash::{Hash, Hasher};
 
-pub mod openai;
 pub mod anthropic;
+pub mod cohere;
 pub mod gemini;
 pub mod mistral;
-pub mod cohere;
+pub mod ollama;
+pub mod openai;
 pub mod perplexity;
 pub mod together;
-pub mod ollama;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatRequest {
@@ -92,7 +92,10 @@ pub struct Usage {
 #[async_trait]
 pub trait LlmProvider: Send + Sync + Debug {
     async fn chat_completion(&self, request: ChatRequest) -> anyhow::Result<ChatResponse>;
-    async fn chat_completion_stream(&self, request: ChatRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>>;
+    async fn chat_completion_stream(
+        &self,
+        request: ChatRequest,
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<ChatResponseChunk>>>;
     async fn health_check(&self) -> anyhow::Result<()>;
     fn name(&self) -> &str;
 }
