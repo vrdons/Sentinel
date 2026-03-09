@@ -7,7 +7,6 @@ edition = "2024"
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 axum = { version = "0.7.9", features = ["macros"] }
 reqwest = { version = "0.12.12", features = ["json", "stream"] }
-libsql = { version = "0.6.0" }
 dashmap = "6.1"
 config = "0.15"
 clap = { version = "4.5", features = ["derive"] }
@@ -30,6 +29,8 @@ candle-nn = "0.8.2"
 candle-transformers = "0.8.2"
 hf-hub = "0.4.1"
 tokenizers = "0.21"
+drizzle = { version = "0.1.5", features = ["rusqlite", "chrono", "uuid", "serde"] }
+rusqlite = { version = "0.37", features = ["chrono"] }
 
 [dev-dependencies]
 wiremock = "0.6"

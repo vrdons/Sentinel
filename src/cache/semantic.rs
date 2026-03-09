@@ -1,9 +1,11 @@
 use crate::cache::CachedResponse;
 use crate::provider::{ChatRequest, ChatResponse};
+use crate::storage::db::SharedDrizzleDb;
+use crate::storage::schema::{InsertSemanticCacheTable, SelectSemanticCacheTable, SentinelSchema};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use libsql::Connection;
-use std::sync::Arc;
+use drizzle::core::expr::{and, eq, gt, lt};
+use drizzle::sqlite::prelude::*;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 use tracing::{debug, info};
@@ -65,7 +67,7 @@ impl std::fmt::Debug for LocalEmbeddingProvider {
 impl LocalEmbeddingProvider {
     pub async fn new(model_name: String) -> Result<Self> {
         let start = Instant::now();
-        let device = Device::Cpu; // Use CPU for portability in gateway
+        let device = Device::Cpu;
 
         let (repo_id, revision) = match model_name.as_str() {
             "all-MiniLM-L6-v2" => ("sentence-transformers/all-MiniLM-L6-v2", "refs/pr/21"),
@@ -95,7 +97,6 @@ impl LocalEmbeddingProvider {
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
 
         let model = BertModel::load(vb, &config)?;
-
         let dimension = config.hidden_size;
 
         info!(
@@ -129,7 +130,6 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
         let token_type_ids = vec![0u32; token_ids.len()];
         let token_type_ids_tensor = Tensor::new(token_type_ids, &self.device)?.unsqueeze(0)?;
 
-        // Use attention mask if available (optional in BertModel::forward)
         let attention_mask = vec![1u32; token_ids.len()];
         let attention_mask_tensor = Tensor::new(attention_mask, &self.device)?.unsqueeze(0)?;
 
@@ -139,12 +139,10 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
             Some(&attention_mask_tensor),
         )?;
 
-        // Mean pooling
         let (_n_batch, n_tokens, _hidden_size) = embeddings.dims3()?;
         let embeddings = (embeddings.sum(1)? / (n_tokens as f64))?;
-        let embeddings = embeddings.get(0)?; // Remove batch dimension
+        let embeddings = embeddings.get(0)?;
 
-        // Normalize
         let norm = embeddings.sqr()?.sum_all()?.sqrt()?;
         let embeddings = embeddings.broadcast_div(&norm)?;
 
@@ -167,7 +165,6 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
     }
 }
 
-/// Calculates cosine similarity between two embeddings
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return 0.0;
@@ -184,21 +181,32 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     dot_product / (norm_a * norm_b)
 }
 
-/// Semantic cache using vector similarity
+#[derive(SQLiteFromRow, Default)]
+struct CacheStatsRow {
+    timestamp: String,
+}
+
+#[derive(SQLiteFromRow, Default)]
+struct CacheIdRow {
+    id: String,
+}
+
 pub struct SemanticCache {
-    db: Arc<Connection>,
+    db: SharedDrizzleDb,
+    schema: SentinelSchema,
     embedding_provider: Box<dyn EmbeddingProvider>,
     config: SemanticCacheConfig,
     cleanup_tick: AtomicU32,
 }
 
 impl SemanticCache {
-    pub async fn new(db: Arc<Connection>, config: SemanticCacheConfig) -> Result<Self> {
+    pub async fn new(db: SharedDrizzleDb, config: SemanticCacheConfig) -> Result<Self> {
         let embedding_provider: Box<dyn EmbeddingProvider> =
             Box::new(LocalEmbeddingProvider::new(config.embedding_model.clone()).await?);
 
         let cache = Self {
             db,
+            schema: SentinelSchema::new(),
             embedding_provider,
             config,
             cleanup_tick: AtomicU32::new(0),
@@ -209,31 +217,7 @@ impl SemanticCache {
     }
 
     async fn setup_database(&self) -> Result<()> {
-        // Create semantic cache table with vector support
-        self.db
-            .execute(
-                &format!(
-                    "CREATE TABLE IF NOT EXISTS semantic_cache (
-                    id TEXT PRIMARY KEY,
-                    prompt_hash TEXT NOT NULL,
-                    embedding F32_BLOB({}),
-                    response TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )",
-                    self.embedding_provider.dimension()
-                ),
-                (),
-            )
-            .await?;
-
-        // Create index for faster similarity search
-        self.db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_semantic_cache_timestamp ON semantic_cache(timestamp)",
-            (),
-        ).await?;
-
+        // semantic_cache table/index are created during Database::new.
         info!(
             "Semantic cache database initialized with {} dimensions",
             self.embedding_provider.dimension()
@@ -241,9 +225,7 @@ impl SemanticCache {
         Ok(())
     }
 
-    /// Generate a prompt key from the request for semantic comparison
     fn generate_prompt_key(&self, request: &ChatRequest) -> String {
-        // Combine all messages into a single prompt for embedding
         let combined_prompt = request
             .messages
             .iter()
@@ -251,7 +233,6 @@ impl SemanticCache {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Include model and temperature for context
         format!(
             "{}|model:{}|temp:{}",
             combined_prompt,
@@ -260,7 +241,6 @@ impl SemanticCache {
         )
     }
 
-    /// Check for semantically similar cached responses using vector similarity
     pub async fn get_similar(&self, request: &ChatRequest) -> Result<Option<CachedResponse>> {
         if !self.config.enabled {
             return Ok(None);
@@ -269,76 +249,21 @@ impl SemanticCache {
         let start = Instant::now();
         let prompt_key = self.generate_prompt_key(request);
 
-        // Generate embedding for the prompt
         let query_embedding = self.embedding_provider.embed(&prompt_key).await?;
-        let query_embedding_bytes: Vec<u8> = query_embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
-
-        // Use libsql's vector similarity search if available
         let cutoff_time =
             chrono::Utc::now() - chrono::Duration::hours(self.config.ttl_hours as i64);
 
-        // Attempt native vector search using vector_distance
-        let mut rows = match self
-            .db
-            .query(
-                "SELECT id, response, timestamp, model, embedding
-             FROM semantic_cache
-             WHERE timestamp > ? AND model = ?
-             ORDER BY vector_distance(embedding, ?)
-             LIMIT 1",
-                libsql::params![
-                    cutoff_time.to_rfc3339(),
-                    request.model.clone(),
-                    query_embedding_bytes.clone()
-                ],
-            )
-            .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                debug!(
-                    "Native vector search failed, falling back to manual scan: {}",
-                    e
-                );
-                // Fallback to manual scan if vector_distance is not supported
-                return self
-                    .get_similar_fallback(request, query_embedding, cutoff_time)
-                    .await;
-            }
-        };
+        let result = self
+            .get_similar_fallback(request, query_embedding, cutoff_time)
+            .await?;
 
-        if let Some(row) = rows.next().await? {
-            let cached_embedding: Vec<f32> = row
-                .get::<Vec<u8>>(4)?
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                .collect();
-
-            let similarity = cosine_similarity(&query_embedding, &cached_embedding);
-
-            if similarity >= self.config.similarity_threshold {
-                let response: ChatResponse = serde_json::from_str(&row.get::<String>(1)?)?;
-                let timestamp = chrono::DateTime::parse_from_rfc3339(&row.get::<String>(2)?)?
-                    .with_timezone(&chrono::Utc);
-
-                info!(
-                    "Semantic cache HIT (native): similarity={:.3}, time={:?}",
-                    similarity,
-                    start.elapsed()
-                );
-                return Ok(Some(CachedResponse {
-                    response,
-                    timestamp,
-                    embedding: Some(cached_embedding),
-                }));
-            }
+        if result.is_some() {
+            info!("Semantic cache HIT: time={:?}", start.elapsed());
+        } else {
+            debug!("Semantic cache MISS: time={:?}", start.elapsed());
         }
 
-        debug!("Semantic cache MISS: time={:?}", start.elapsed());
-        Ok(None)
+        Ok(result)
     }
 
     async fn get_similar_fallback(
@@ -347,22 +272,29 @@ impl SemanticCache {
         query_embedding: Vec<f32>,
         cutoff_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<Option<CachedResponse>> {
-        let mut rows = self
+        let db = self
             .db
-            .query(
-                "SELECT response, timestamp, embedding
-             FROM semantic_cache 
-             WHERE timestamp > ? AND model = ?
-             LIMIT 100",
-                libsql::params![cutoff_time.to_rfc3339(), request.model.clone()],
-            )
-            .await?;
+            .lock()
+            .map_err(|_| anyhow!("database mutex poisoned"))?;
+
+        let rows: Vec<SelectSemanticCacheTable> = db
+            .select(())
+            .from(self.schema.semantic_cache)
+            .r#where(and([
+                gt(
+                    self.schema.semantic_cache.timestamp,
+                    cutoff_time.to_rfc3339(),
+                ),
+                eq(self.schema.semantic_cache.model, request.model.clone()),
+            ]))
+            .limit(100)
+            .all()?;
 
         let mut best_match: Option<(f32, CachedResponse)> = None;
 
-        while let Some(row) = rows.next().await? {
+        for row in rows {
             let cached_embedding: Vec<f32> = row
-                .get::<Vec<u8>>(2)?
+                .embedding
                 .chunks_exact(4)
                 .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
                 .collect();
@@ -372,10 +304,9 @@ impl SemanticCache {
             if similarity >= self.config.similarity_threshold
                 && best_match.as_ref().is_none_or(|(s, _)| similarity > *s)
             {
-                let response: ChatResponse = serde_json::from_str(&row.get::<String>(0)?)?;
-                let timestamp = chrono::DateTime::parse_from_rfc3339(&row.get::<String>(1)?)?
+                let response: ChatResponse = serde_json::from_str(&row.response)?;
+                let timestamp = chrono::DateTime::parse_from_rfc3339(&row.timestamp)?
                     .with_timezone(&chrono::Utc);
-
                 best_match = Some((
                     similarity,
                     CachedResponse {
@@ -390,7 +321,6 @@ impl SemanticCache {
         Ok(best_match.map(|(_, r)| r))
     }
 
-    /// Store a response in the semantic cache
     pub async fn store(&self, request: &ChatRequest, response: &ChatResponse) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
@@ -399,33 +329,34 @@ impl SemanticCache {
         let start = Instant::now();
         let prompt_key = self.generate_prompt_key(request);
 
-        // Generate embedding
         let embedding = self.embedding_provider.embed(&prompt_key).await?;
-
-        // Convert embedding to bytes
         let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
 
         let id = uuid::Uuid::new_v4().to_string();
         let response_json = serde_json::to_string(response)?;
         let timestamp = chrono::Utc::now();
 
-        // Store in database
-        self.db.execute(
-            "INSERT INTO semantic_cache (id, prompt_hash, embedding, response, timestamp, model)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            libsql::params![
-                id,
-                format!("{:x}", md5::compute(prompt_key.as_bytes())),
-                embedding_bytes,
-                response_json,
-                timestamp.to_rfc3339(),
-                request.model.clone(),
-            ],
-        ).await?;
+        {
+            let db = self
+                .db
+                .lock()
+                .map_err(|_| anyhow!("database mutex poisoned"))?;
+
+            db.insert(self.schema.semantic_cache)
+                .values([InsertSemanticCacheTable::new(
+                    id,
+                    format!("{:x}", md5::compute(prompt_key.as_bytes())),
+                    embedding_bytes,
+                    response_json,
+                    timestamp.to_rfc3339(),
+                    request.model.clone(),
+                    chrono::Utc::now().to_rfc3339(),
+                )])
+                .execute()?;
+        }
 
         debug!("Stored semantic cache entry in {:?}", start.elapsed());
 
-        // Clean up old entries periodically (every ~100 inserts)
         if self
             .cleanup_tick
             .fetch_add(1, Ordering::Relaxed)
@@ -441,43 +372,93 @@ impl SemanticCache {
         let cutoff_time =
             chrono::Utc::now() - chrono::Duration::hours(self.config.ttl_hours as i64 * 2);
 
-        let deleted = self
+        let db = self
             .db
-            .execute(
-                "DELETE FROM semantic_cache WHERE timestamp < ?",
-                libsql::params![cutoff_time.to_rfc3339()],
-            )
-            .await?;
+            .lock()
+            .map_err(|_| anyhow!("database mutex poisoned"))?;
+
+        let deleted = db
+            .delete(self.schema.semantic_cache)
+            .r#where(lt(
+                self.schema.semantic_cache.timestamp,
+                cutoff_time.to_rfc3339(),
+            ))
+            .execute()?;
 
         if deleted > 0 {
             info!("Cleaned up {} old semantic cache entries", deleted);
         }
 
+        if self.config.max_cache_size > 0 {
+            let mut offset = self.config.max_cache_size;
+            let batch_size = 256usize;
+
+            loop {
+                let stale_ids: Vec<CacheIdRow> = db
+                    .select(self.schema.semantic_cache.id)
+                    .from(self.schema.semantic_cache)
+                    .order_by([drizzle::core::OrderBy::desc(
+                        self.schema.semantic_cache.timestamp,
+                    )])
+                    .limit(batch_size)
+                    .offset(offset)
+                    .all()?;
+
+                if stale_ids.is_empty() {
+                    break;
+                }
+
+                for row in &stale_ids {
+                    db.delete(self.schema.semantic_cache)
+                        .r#where(eq(self.schema.semantic_cache.id, row.id.clone()))
+                        .execute()?;
+                }
+
+                offset += stale_ids.len();
+            }
+        }
+
         Ok(())
     }
 
-    /// Get cache statistics
     pub async fn get_stats(&self) -> Result<serde_json::Value> {
-        let mut rows = self
+        let db = self
             .db
-            .query(
-                "SELECT COUNT(*), MAX(timestamp), MIN(timestamp) FROM semantic_cache",
-                (),
-            )
-            .await?;
+            .lock()
+            .map_err(|_| anyhow!("database mutex poisoned"))?;
 
-        if let Some(row) = rows.next().await? {
-            Ok(serde_json::json!({
-                "total_entries": row.get::<u32>(0)?,
-                "latest_entry": row.get::<Option<String>>(1)?,
-                "oldest_entry": row.get::<Option<String>>(2)?,
-                "similarity_threshold": self.config.similarity_threshold,
-                "embedding_model": self.config.embedding_model,
-                "dimension": self.embedding_provider.dimension(),
-            }))
-        } else {
-            Ok(serde_json::json!({}))
+        let rows: Vec<CacheStatsRow> = db
+            .select(self.schema.semantic_cache.timestamp)
+            .from(self.schema.semantic_cache)
+            .all()?;
+
+        let total_entries = rows.len() as u32;
+        let mut latest_entry: Option<String> = None;
+        let mut oldest_entry: Option<String> = None;
+
+        for row in rows {
+            if latest_entry
+                .as_ref()
+                .is_none_or(|current| row.timestamp > *current)
+            {
+                latest_entry = Some(row.timestamp.clone());
+            }
+            if oldest_entry
+                .as_ref()
+                .is_none_or(|current| row.timestamp < *current)
+            {
+                oldest_entry = Some(row.timestamp);
+            }
         }
+
+        Ok(serde_json::json!({
+            "total_entries": total_entries,
+            "latest_entry": latest_entry,
+            "oldest_entry": oldest_entry,
+            "similarity_threshold": self.config.similarity_threshold,
+            "embedding_model": self.config.embedding_model,
+            "dimension": self.embedding_provider.dimension(),
+        }))
     }
 }
 
