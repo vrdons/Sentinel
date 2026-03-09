@@ -7,7 +7,7 @@ pub struct PricingTable {
 }
 
 impl PricingTable {
-    pub fn default() -> Self {
+    pub fn new() -> Self {
         let mut prices = HashMap::new();
 
         // OpenAI Pricing (Feb 2025) - All prices per 1K tokens
@@ -264,5 +264,11 @@ impl PricingTable {
         } else {
             0.0 // Unknown model
         }
+    }
+}
+
+impl Default for PricingTable {
+    fn default() -> Self {
+        Self::new()
     }
 }

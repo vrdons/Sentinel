@@ -45,7 +45,6 @@ impl GeminiProvider {
         let generation_config = GeminiGenerationConfig {
             temperature: request.temperature,
             max_output_tokens: request.max_tokens,
-            ..Default::default()
         };
 
         GeminiRequest {

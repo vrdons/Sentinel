@@ -65,8 +65,7 @@ impl LlmProvider for OllamaProvider {
                     if line.is_empty() {
                         continue;
                     }
-                    if line.starts_with("data: ") {
-                        let data = &line[6..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" {
                             continue;
                         }

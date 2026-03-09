@@ -186,52 +186,47 @@ impl LlmProvider for AnthropicProvider {
         let mut current_id = String::new();
         let mut current_model = request.model.clone();
 
-        let stream = response.bytes_stream().flat_map(move |item| {
-            match item {
-                Ok(bytes) => {
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    let mut chunks = Vec::new();
-                    while let Some(line_end) = buffer.find('\n') {
-                        let line = buffer.drain(..line_end + 1).collect::<String>();
-                        let line = line.trim();
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-                            match serde_json::from_str::<AnthropicStreamEvent>(data) {
-                                Ok(event) => match event {
-                                    AnthropicStreamEvent::MessageStart { message } => {
-                                        current_id = message.id.clone();
-                                        current_model = message.model.clone();
-                                    }
-                                    AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
-                                        if let AnthropicDelta::TextDelta { text } = delta {
-                                            chunks.push(Ok(ChatResponseChunk {
-                                                id: current_id.clone(),
-                                                object: "chat.completion.chunk".to_string(),
-                                                created: Utc::now().timestamp() as u64,
-                                                model: current_model.clone(),
-                                                choices: vec![ChatChunkChoice {
-                                                    index,
-                                                    delta: ChatChunkDelta {
-                                                        role: None,
-                                                        content: Some(text),
-                                                    },
-                                                    finish_reason: None,
-                                                }],
-                                            }));
-                                        }
-                                    }
-                                    _ => {}
-                                },
-                                Err(_) => {} // Ignore parse errors for non-data lines or unknown events
+        let stream = response.bytes_stream().flat_map(move |item| match item {
+            Ok(bytes) => {
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+                let mut chunks = Vec::new();
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer.drain(..line_end + 1).collect::<String>();
+                    let line = line.trim();
+                    if let Some(data) = line.strip_prefix("data: ")
+                        && let Ok(event) = serde_json::from_str::<AnthropicStreamEvent>(data)
+                    {
+                        match event {
+                            AnthropicStreamEvent::MessageStart { message } => {
+                                current_id = message.id.clone();
+                                current_model = message.model.clone();
                             }
+                            AnthropicStreamEvent::ContentBlockDelta {
+                                index,
+                                delta: AnthropicDelta::TextDelta { text },
+                            } => {
+                                chunks.push(Ok(ChatResponseChunk {
+                                    id: current_id.clone(),
+                                    object: "chat.completion.chunk".to_string(),
+                                    created: Utc::now().timestamp() as u64,
+                                    model: current_model.clone(),
+                                    choices: vec![ChatChunkChoice {
+                                        index,
+                                        delta: ChatChunkDelta {
+                                            role: None,
+                                            content: Some(text),
+                                        },
+                                        finish_reason: None,
+                                    }],
+                                }));
+                            }
+                            _ => {}
                         }
                     }
-                    futures_util::stream::iter(chunks)
                 }
-                Err(e) => {
-                    futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))])
-                }
+                futures_util::stream::iter(chunks)
             }
+            Err(e) => futures_util::stream::iter(vec![Err(anyhow::anyhow!("Stream error: {}", e))]),
         });
 
         Ok(Box::pin(stream))

@@ -85,54 +85,54 @@ pub async fn chat_completion(
         }
 
         // Then check semantic cache if available
-        if let Some(semantic_cache) = &state.semantic_cache {
-            if let Ok(Some(cached_res)) = semantic_cache.get_similar(&request).await {
-                info!("Semantic cache hit for request {}", request_id);
+        if let Some(semantic_cache) = &state.semantic_cache
+            && let Ok(Some(cached_res)) = semantic_cache.get_similar(&request).await
+        {
+            info!("Semantic cache hit for request {}", request_id);
 
-                let original_cost = cached_res
+            let original_cost = cached_res
+                .response
+                .usage
+                .as_ref()
+                .map(|u| {
+                    state.pricing.calculate_cost(
+                        &request.model,
+                        u.prompt_tokens,
+                        u.completion_tokens,
+                    )
+                })
+                .unwrap_or(0.0);
+
+            // Log semantic cache hit
+            let log = RequestLog {
+                id: request_id,
+                timestamp: Utc::now(),
+                provider: "semantic-cache".to_string(),
+                model: request.model.clone(),
+                input_tokens: 0,
+                output_tokens: cached_res
                     .response
                     .usage
                     .as_ref()
-                    .map(|u| {
-                        state.pricing.calculate_cost(
-                            &request.model,
-                            u.prompt_tokens,
-                            u.completion_tokens,
-                        )
-                    })
-                    .unwrap_or(0.0);
+                    .map(|u| u.completion_tokens)
+                    .unwrap_or(0),
+                latency_ms: 0,
+                cost_usd: 0.0,
+                cost_saved: original_cost,
+                quality_score: 1.0,
+                cache_hit: true,
+                pii_redacted,
+                status: "success".to_string(),
+                error_message: None,
+            };
+            let db = state.db.clone();
+            tokio::spawn(async move {
+                if let Err(e) = db.log_request(&log).await {
+                    error!("Failed to log semantic cache hit: {}", e);
+                }
+            });
 
-                // Log semantic cache hit
-                let log = RequestLog {
-                    id: request_id,
-                    timestamp: Utc::now(),
-                    provider: "semantic-cache".to_string(),
-                    model: request.model.clone(),
-                    input_tokens: 0,
-                    output_tokens: cached_res
-                        .response
-                        .usage
-                        .as_ref()
-                        .map(|u| u.completion_tokens)
-                        .unwrap_or(0),
-                    latency_ms: 0,
-                    cost_usd: 0.0,
-                    cost_saved: original_cost,
-                    quality_score: 1.0,
-                    cache_hit: true,
-                    pii_redacted,
-                    status: "success".to_string(),
-                    error_message: None,
-                };
-                let db = state.db.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = db.log_request(&log).await {
-                        error!("Failed to log semantic cache hit: {}", e);
-                    }
-                });
-
-                return Ok(Json(cached_res.response).into_response());
-            }
+            return Ok(Json(cached_res.response).into_response());
         }
     }
 

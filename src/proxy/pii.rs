@@ -1,8 +1,14 @@
-use fancy_regex::Regex;
+use regex::Regex;
 use std::sync::OnceLock;
 
 pub struct PiiRedactor {
     patterns: Vec<(&'static str, Regex)>,
+}
+
+impl Default for PiiRedactor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PiiRedactor {

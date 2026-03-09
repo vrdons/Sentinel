@@ -26,9 +26,6 @@ pub struct CostOptimizer {
 #[derive(Debug, Clone)]
 struct ModelPerformance {
     avg_quality: f32,
-    avg_latency: f32,
-    cost_per_token: f64,
-    total_requests: u32,
     confidence: f32, // How confident we are in these metrics (based on sample size)
 }
 
@@ -186,12 +183,12 @@ impl CostOptimizer {
         let complexity_tier = self.assess_complexity_tier(request);
         let cache_key = format!("{}:{}", current_model, complexity_tier);
 
-        if let Ok(cache) = self.suggestion_cache.read() {
-            if let Some(cached_suggestion) = cache.get(&cache_key) {
-                // Found cached suggestion - log async and return immediately
-                self.log_optimization_async(cached_suggestion, endpoint);
-                return Ok(Some(cached_suggestion.clone()));
-            }
+        if let Ok(cache) = self.suggestion_cache.read()
+            && let Some(cached_suggestion) = cache.get(&cache_key)
+        {
+            // Found cached suggestion - log async and return immediately
+            self.log_optimization_async(cached_suggestion, endpoint);
+            return Ok(Some(cached_suggestion.clone()));
         }
 
         // SLOW PATH: Not in cache - compute suggestion (rare)
@@ -202,15 +199,15 @@ impl CostOptimizer {
         let cache_key_clone = cache_key.clone();
 
         tokio::spawn(async move {
-            if let Ok(suggestion) = optimizer.compute_suggestion_slow(&request_clone).await {
-                if let Some(sugg) = suggestion {
-                    // Cache the result for future requests
-                    if let Ok(mut cache) = optimizer.suggestion_cache.write() {
-                        cache.insert(cache_key_clone, sugg.clone());
-                    }
-                    // Log it
-                    optimizer.log_optimization_async(&sugg, &endpoint_str);
+            if let Ok(suggestion) = optimizer.compute_suggestion_slow(&request_clone).await
+                && let Some(sugg) = suggestion
+            {
+                // Cache the result for future requests
+                if let Ok(mut cache) = optimizer.suggestion_cache.write() {
+                    cache.insert(cache_key_clone, sugg.clone());
                 }
+                // Log it
+                optimizer.log_optimization_async(&sugg, &endpoint_str);
             }
         });
 
@@ -312,10 +309,10 @@ impl CostOptimizer {
     async fn maybe_update_performance_cache(&self) -> Result<()> {
         {
             let last_upd = self.last_update.read().unwrap();
-            if let Some(last) = *last_upd {
-                if Utc::now().signed_duration_since(last).num_minutes() < 5 {
-                    return Ok(());
-                }
+            if let Some(last) = *last_upd
+                && Utc::now().signed_duration_since(last).num_minutes() < 5
+            {
+                return Ok(());
             }
         }
 
@@ -324,17 +321,9 @@ impl CostOptimizer {
         let mut new_cache = HashMap::new();
         if let Some(models) = stats.get("models").and_then(|m| m.as_array()) {
             for model_data in models {
-                if let (
-                    Some(model),
-                    Some(requests),
-                    Some(avg_latency),
-                    Some(avg_cost),
-                    Some(avg_quality),
-                ) = (
+                if let (Some(model), Some(requests), Some(avg_quality)) = (
                     model_data.get("model").and_then(|m| m.as_str()),
                     model_data.get("requests").and_then(|r| r.as_u64()),
-                    model_data.get("avg_latency").and_then(|l| l.as_f64()),
-                    model_data.get("avg_cost").and_then(|c| c.as_f64()),
                     model_data.get("avg_quality").and_then(|q| q.as_f64()),
                 ) {
                     let confidence = self.calculate_confidence(requests as u32);
@@ -343,9 +332,6 @@ impl CostOptimizer {
                         model.to_string(),
                         ModelPerformance {
                             avg_quality: avg_quality as f32,
-                            avg_latency: avg_latency as f32,
-                            cost_per_token: avg_cost,
-                            total_requests: requests as u32,
                             confidence,
                         },
                     );
@@ -426,10 +412,10 @@ impl CostOptimizer {
         }
 
         // Temperature factor
-        if let Some(temp) = request.temperature {
-            if temp > 0.7 {
-                complexity += 0.1; // Creative tasks are usually more complex
-            }
+        if let Some(temp) = request.temperature
+            && temp > 0.7
+        {
+            complexity += 0.1; // Creative tasks are usually more complex
         }
 
         complexity.min(1.0)
@@ -647,7 +633,7 @@ impl CostOptimizer {
     fn calculate_confidence(&self, sample_size: u32) -> f32 {
         // Confidence based on sample size (sigmoid curve)
         let x = sample_size as f32;
-        (2.0 / (1.0 + (-x / 50.0).exp()) - 1.0).max(0.1).min(0.95)
+        (2.0 / (1.0 + (-x / 50.0).exp()) - 1.0).clamp(0.1, 0.95)
     }
 
     /// Get prompt hash for grouping similar requests
